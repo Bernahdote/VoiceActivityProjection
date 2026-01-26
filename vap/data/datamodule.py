@@ -105,13 +105,24 @@ class VAPDataset(Dataset):
         # so we round it to nearest second
         # TODO: why can this be off, or why bad waveform shapes?
         dur = round(d["end"] - d["start"])
-        w, _ = load_waveform(
-            d["audio_path"],
+
+        w1, _ = load_waveform( # WB
+            d["audio_path_a"],
             start_time=d["start"],
             end_time=d["end"],
             sample_rate=self.sample_rate,
-            mono=self.mono,
+            mono=True, 
         )
+        w2, _ = load_waveform( # WB
+            d["audio_path_b"],
+            start_time=d["start"],
+            end_time=d["end"],
+            sample_rate=self.sample_rate,
+            mono=True, 
+        )
+
+        w = torch.cat([w1, w2], dim=0)  # WB
+       
 
         # TODO: Assume that the clip start at 0 and pad end? vice versa? how is the vad_list?
         # Ensure correct duration
@@ -125,8 +136,9 @@ class VAPDataset(Dataset):
 
         # Stereo Audio
         # Use the vad-list information to convert mono to stereo
-        if not self.mono and w.shape[0] == 1:
-            w = mono_to_stereo(w, d["vad_list"], sample_rate=self.sample_rate)
+        
+        # if not self.mono and w.shape[0] == 1:
+        #     w = mono_to_stereo(w, d["vad_list"], sample_rate=self.sample_rate)
 
         vad = vad_list_to_onehot(
             d["vad_list"], duration=dur + self.horizon, frame_hz=self.frame_hz

@@ -39,7 +39,8 @@ def get_sliding_windows(
 
 def sliding_window(
     vad_list: VAD_LIST,
-    audio_path: str,
+    audio_path_a: str,
+    audio_path_b: str,
     duration: float = 20,
     overlap: float = 5,
     horizon: float = 2,
@@ -55,8 +56,9 @@ def sliding_window(
         vad_list_subset = get_vad_list_subset(vad_list, start, end + horizon)
         samples.append(
             {
-                "session": Path(audio_path).stem,
-                "audio_path": audio_path,
+                "session": Path(audio_path_a).stem.rsplit("_", 1)[0], # WB
+                "audio_path_a": audio_path_a, # WB 
+                "audio_path_b": audio_path_b, # WB
                 "start": start,
                 "end": end,
                 "vad_list": vad_list_subset,
@@ -72,14 +74,21 @@ def main(args):
     for _, row in tqdm.tqdm(
         df.iterrows(), total=len(df), desc="Create sliding window dataset"
     ):
-        vad_list = read_json(row.vad_path)
+        vad__json_a = read_json(row.vad_path_a) # WB
+        vad_json_b = read_json(row.vad_path_b) # WB 
+        vad_a = [[x["start"], x["end"]] for x in vad__json_a.get("metadata:vad", [])] # WB 
+        vad_b = [[x["start"], x["end"]] for x in vad_json_b.get("metadata:vad", [])] # WB 
+        vad_list = [vad_a, vad_b]
+
+
         if invalid_vad_list(vad_list):
-            skipped.append(row.vad_path)
+            skipped.append(row.vad_path_a) # WB
             continue
 
         session_samples = sliding_window(
             vad_list=vad_list,
-            audio_path=row.audio_path,
+            audio_path_a=row.audio_path_a, # WB
+            audio_path_b=row.audio_path_b, # WB
             duration=args.duration,
             overlap=args.overlap,
             horizon=args.horizon,
