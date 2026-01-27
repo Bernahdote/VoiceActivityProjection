@@ -81,6 +81,11 @@ def main(args):
         vad_list = [vad_a, vad_b]
 
 
+
+        if len(vad_a) == 0 or len(vad_b) == 0: # WB
+            skipped.append(row.vad_path_a) # WB
+            continue # WB
+
         if invalid_vad_list(vad_list):
             skipped.append(row.vad_path_a) # WB
             continue
