@@ -210,7 +210,7 @@ def evaluation(args):
     """Event Evaluation"""
     # Load Model
     
-    cfg = OmegaConf.load("vap/conf/default_config.yaml")
+    cfg = OmegaConf.load("/mnt/sda/willem/VoiceActivityProjection/outputs/2026-01-28/10-41-58/.hydra/config.yaml") # WB: Weird config used
     model = instantiate(cfg.module.model)
 
     module = VAPModule.load_from_checkpoint(args.checkpoint, model=model)
