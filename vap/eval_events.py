@@ -210,7 +210,7 @@ def evaluation(args):
     """Event Evaluation"""
     # Load Model
     
-    cfg = OmegaConf.load("vap/conf/config.yaml")
+    cfg = OmegaConf.load("vap/conf/default_config.yaml")
     model = instantiate(cfg.module.model)
 
     module = VAPModule.load_from_checkpoint(args.checkpoint, model=model)
