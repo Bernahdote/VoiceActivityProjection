@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from functools import partial
+from typing import Optional
 from x_transformers.x_transformers import *
 
 
