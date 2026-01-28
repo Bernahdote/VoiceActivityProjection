@@ -14,6 +14,9 @@ from vap.utils.plot import plot_melspectrogram, plot_vap_probs, plot_vad
 from vap.model.vap_model import VAPModule, VAP # WB -- VapModule instead of lightning_module
 from vap.modules.lightning_module import everything_deterministic # WB
 
+from omegaconf import OmegaConf # WB 
+from hydra.utils import instantiate # WB
+
 
 everything_deterministic()
 
@@ -32,6 +35,7 @@ def extract_preds_and_targets(
         for lab in labels:
             targets.append(1 if lab == "shift" else 0)
         return targets
+
 
     model = model.eval()
     data = {
@@ -205,7 +209,13 @@ def simple_label_stats(df: pd.DataFrame):
 def evaluation(args):
     """Event Evaluation"""
     # Load Model
-    model = VAPModule.load_from_checkpoint(args.checkpoint).model.eval() # WB
+    
+    cfg = OmegaConf.load("vap/conf/config.yaml")
+    model = instantiate(cfg.module.model)
+
+    module = VAPModule.load_from_checkpoint(args.checkpoint, model=model)
+    model = module.model.eval()
+
     if torch.cuda.is_available():
         model = model.to("cuda")
     # Load Dataset
