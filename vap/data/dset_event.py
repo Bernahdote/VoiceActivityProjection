@@ -201,6 +201,11 @@ def create_classification_dset(
             skipped.append(row.vad_path_a)
             continue
 
+        if(len(vad_a) == 0 or len(vad_b) == 0):
+            skipped.append(row.vad_path_a)
+            continue
+        
+
         if ipu_based_events:
             c = extract_ipu_classification(vad_list, fill_time=min_silence_time)
         else:
