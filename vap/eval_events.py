@@ -11,7 +11,9 @@ import pandas as pd
 from vap.data.dset_event import VAPClassificationDataset
 from vap.utils.utils import write_json
 from vap.utils.plot import plot_melspectrogram, plot_vap_probs, plot_vad
-from vap.modules.lightning_module import VAPModule, VAP, everything_deterministic
+from vap.model.vap_model import VAPModule, VAP # WB -- VapModule instead of lightning_module
+from vap.modules.lightning_module import everything_deterministic # WB
+
 
 everything_deterministic()
 
@@ -203,7 +205,7 @@ def simple_label_stats(df: pd.DataFrame):
 def evaluation(args):
     """Event Evaluation"""
     # Load Model
-    model: VAP = VAPModule.load_model(args.checkpoint).eval()
+    model = VAPModule.load_from_checkpoint(args.checkpoint).model.eval() # WB
     if torch.cuda.is_available():
         model = model.to("cuda")
     # Load Dataset

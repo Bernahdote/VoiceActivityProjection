@@ -4,7 +4,7 @@ from hydra.utils import instantiate
 from omegaconf import DictConfig, OmegaConf
 from lightning import seed_everything
 
-from vap.modules.lightning_module import VAPModule
+from vap.model.vap_model import VAPModule # WB
 
 log: logging.Logger = logging.getLogger(__name__)
 
