@@ -21,6 +21,30 @@ from hydra.utils import instantiate # WB
 everything_deterministic()
 
 
+def get_shift_probability(out, start_time, end_time, speaker, frame_hz):  # WB
+    region_start = int(start_time * frame_hz)  # WB
+    region_end = int(end_time * frame_hz)  # WB
+
+    ps = out["p"][..., region_start:region_end].mean(-1).cpu()  # WB
+    pn = out["p_now"][..., region_start:region_end].mean(-1).cpu()  # WB
+    pf = out["p_future"][..., region_start:region_end].mean(-1).cpu()  # WB
+
+    batch_size = pn.shape[0]  # WB
+    if batch_size == 1:  # WB
+        speaker = [speaker]  # WB
+
+    for ii, spk in enumerate(speaker):  # WB
+        if spk == 0:  # WB
+            ps[:, ii] = 1 - ps[:, ii]  # WB
+            pn[ii] = 1 - pn[ii]  # WB
+            pf[ii] = 1 - pf[ii]  # WB
+
+    preds = {f"p{k+1}": v.tolist() for k, v in enumerate(ps)}  # WB
+    preds["p_now"] = pn.tolist()  # WB
+    preds["p_fut"] = pf.tolist()  # WB
+    return preds  # WB
+
+
 @torch.inference_mode()
 def extract_preds_and_targets(
     model: VAP,
@@ -45,9 +69,13 @@ def extract_preds_and_targets(
     for batch in tqdm.tqdm(dloader, desc="Event classification"):
         # Model prediction
         out = model.probs(batch["waveform"].to(model.device))
-        batch_preds = model.get_shift_probability(
-            out, region_start_time, region_end_time, speaker=batch["speaker"]
-        )
+        batch_preds = get_shift_probability(  # WB
+            out,  # WB
+            region_start_time,  # WB
+            region_end_time,  # WB
+            speaker=batch["speaker"],  # WB
+            frame_hz=model.frame_hz,  # WB
+        )  # WB
         batch_targets = get_targets(batch["label"])
         for k, v in batch_preds.items():
             data[k].extend(v)
