@@ -188,18 +188,27 @@ def create_classification_dset(
     for _, row in tqdm.tqdm(
         audio_vad.iterrows(), total=len(audio_vad), desc="Extracting event dataset"
     ):
-        vad_list = read_json(row.vad_path)
+        
+        vad_json_a = read_json(row.vad_path_a) # WB
+        vad_json_b = read_json(row.vad_path_b)
+
+        vad_a = [[x["start"], x["end"]] for x in vad_json_a.get("metadata:vad", [])]
+        vad_b = [[x["start"], x["end"]] for x in vad_json_b.get("metadata:vad", [])]
+
+        vad_list = [vad_a, vad_b]
 
         if invalid_vad_list(vad_list):
-            skipped.append(row.vad_path)
+            skipped.append(row.vad_path_a)
             continue
 
         if ipu_based_events:
             c = extract_ipu_classification(vad_list, fill_time=min_silence_time)
         else:
             c = extract_shift_holds(vad_list, eventer)
-        c["audio_path"] = row.audio_path
-        c["vad_path"] = row.vad_path
+        c["audio_path_a"] = row.audio_path_a # WB
+        c["audio_path_b"] = row.audio_path_b
+        c["vad_path_a"] = row.vad_path_a
+        c["vad_path_b"] = row.vad_path_b
         all_dfs.append(c)
     c = pd.concat(all_dfs, ignore_index=True)
 
@@ -248,13 +257,22 @@ class VAPClassificationDataset(Dataset):
         start_time = 0
         if d["ipu_end"] > self.context:
             start_time = d["ipu_end"] - self.context
-        w, _ = load_waveform(
-            d["audio_path"],
+
+        w1, _ = load_waveform( # WB
+            d["audio_path_a"],
             start_time=start_time,
             end_time=d["ipu_end"],
             sample_rate=self.sample_rate,
-            mono=self.mono,
+            mono=True,
+        )       
+        w2, _ = load_waveform( # WB
+            d["audio_path_b"],
+            start_time=start_time,
+            end_time=d["ipu_end"],
+            sample_rate=self.sample_rate,
+            mono=True,
         )
+        w = torch.cat((w1, w2), dim=0)
         n_channels = w.shape[0]
         if start_time == 0:
             diff = self.context - d["ipu_end"]
