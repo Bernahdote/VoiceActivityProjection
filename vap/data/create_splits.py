@@ -37,7 +37,8 @@ if __name__ == "__main__":
     N = len(df)
 
     # Add session column
-    df["session"] = df["audio_path"].apply(lambda x: Path(x).stem)
+    df["session"] = df["audio_path_a"].apply(lambda x: Path(x).stem.rsplit("_", 1)[0]) # WB 
+
 
     # If any file path were provided we simply extract those
     if args.train_file or args.val_file or args.test_file:
