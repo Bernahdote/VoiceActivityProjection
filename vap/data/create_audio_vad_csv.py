@@ -48,6 +48,7 @@ if __name__ == "__main__":
 
         })
 
+    print("Total conversations (with 2 files): ", len(data)) # WB
     print("Skipped conversations (not 2 files): ", len(skipped)) # WB
 
 
