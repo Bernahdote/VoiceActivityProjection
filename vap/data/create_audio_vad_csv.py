@@ -16,14 +16,13 @@ if __name__ == "__main__":
     for k, v in vars(args).items():
         print(f"{k}: {v}")
 
-    audio_paths = list(Path(args.audio_dir).rglob("*.wav")) #
-
-    json_paths = list(Path(args.vad_dir).rglob("*.json"))
-    json_map = {p.stem: p for p in json_paths}
+    audio_paths = list(Path(args.audio_dir).rglob("*.wav")) # WB
+    json_paths = list(Path(args.vad_dir).rglob("*.json")) # WB
 
 
     groups = {} # WB
     data = []
+    skipped = [] # WB
 
     for audio_path in tqdm(audio_paths): # WB
         stem = audio_path.stem # WB
@@ -34,7 +33,9 @@ if __name__ == "__main__":
     
     for conv_id, paths in groups.items(): # WB
         if len(paths) != 2: # WB
-            raise ValueError(f"Expected exactly 2 ID's per conversation {conv_id}") # WB
+            skipped.append(conv_id) # WB
+            continue # WB
+
         audio_a, audio_b = paths[:2] # WB
         vad_a = audio_a.with_suffix(".json") # WB -- Think this is correct
         vad_b = audio_b.with_suffix(".json") # WB
@@ -47,6 +48,7 @@ if __name__ == "__main__":
 
         })
 
+    print("Skipped conversations (not 2 files): ", len(skipped)) # WB
 
 
         
