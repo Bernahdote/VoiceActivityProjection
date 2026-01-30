@@ -15,6 +15,28 @@ todo.md
 vap_output.json
 vap_output.png
 
+# Local envs
+.venv*/
+
+# Local datasets
+dataset_phrases/
+dataset_swb/
+
+# Local analysis / experiments
+analyzes/
+sds/
+
+# Generated example artifacts (keep example/checkpoints tracked)
+example/*.ckpt
+example/*.pt
+example/*.wav
+example/*.TextGrid
+example/*_vad_list.json
+example/*.json
+
+# One-off local script
+load_stereo.py
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
