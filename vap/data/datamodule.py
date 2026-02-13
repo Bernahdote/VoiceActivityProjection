@@ -153,6 +153,24 @@ class VAPDataset(Dataset):
         fa = fa[start_idx:end_idx]
         fb = fb[start_idx:end_idx]
 
+        expected_src_len = max(1, int((d["end"] - d["start"]) * src_fps))
+
+        if fa.shape[0] == 0:
+            fa = torch.zeros((expected_src_len, fa.shape[1]), dtype=fa.dtype)
+        if fb.shape[0] == 0:
+            fb = torch.zeros((expected_src_len, fb.shape[1]), dtype=fb.dtype)
+
+        fa = fa[:expected_src_len]
+        fb = fb[:expected_src_len]      
+
+        if fa.shape[0] < expected_src_len: # WB: Forward padding if missing value. 
+            pad_n = expected_src_len - fa.shape[0]
+            fa = torch.cat([fa, fa[-1:].repeat(pad_n, 1)], dim=0)
+
+        if fb.shape[0] < expected_src_len:
+            pad_n = expected_src_len - fb.shape[0]
+            fb = torch.cat([fb, fb[-1:].repeat(pad_n, 1)], dim=0)
+
 
         fa = torch.nn.functional.interpolate(fa.T.unsqueeze(0), size=int((d["end"] - d["start"])* self.frame_hz), mode="linear", align_corners=False).squeeze(0).T
         fb = torch.nn.functional.interpolate(fb.T.unsqueeze(0), size=int((d["end"] - d["start"])* self.frame_hz), mode="linear", align_corners=False).squeeze(0).T
