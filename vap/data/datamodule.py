@@ -130,21 +130,23 @@ class VAPDataset(Dataset):
 
 
         VIDEO_KEYS = [
-        "movement_v4:gaze_encodings",
-        "movement_v4:head_encodings",
-        "movement_v4:expression",
-        "movement_v4:alignment_head_rotation",
-        "movement_v4:FAUToken",
-        "smplh:body_pose",
-        "smplh:left_hand_pose",
-        "smplh:right_hand_pose",
+            "movement:gaze_encodings",
+            "movement:head_encodings",
+            "movement:expression",
+            "movement:alignment_head_rotation",
+            "movement:FAUToken",
+            "smplh:body_pose",
+            "smplh:left_hand_pose",
+            "smplh:right_hand_pose",
         ]
+
+        # WB: make use of the gates that we found? 
 
         za = np.load(video_path_a, allow_pickle=False)
         zb = np.load(video_path_b, allow_pickle=False)
 
-        fa = torch.from_numpy(np.concatenate([za[k] for k in VIDEO_KEYS], axis=-1)).float()
-        fb = torch.from_numpy(np.concatenate([zb[k] for k in VIDEO_KEYS], axis=-1)).float()
+        fa = torch.from_numpy(np.concatenate([za[k].reshape(za[k].shape[0], -1) for k in VIDEO_KEYS], axis=-1)).float()
+        fb = torch.from_numpy(np.concatenate([zb[k].reshape(zb[k].shape[0], -1) for k in VIDEO_KEYS], axis=-1)).float()
 
         src_fps = 30.0
         start_idx = int(d["start"] * src_fps)
