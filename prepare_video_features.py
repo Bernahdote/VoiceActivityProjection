@@ -26,8 +26,14 @@ FEATURE_KEYS = [
 OUTPUT_TAIL = ".f.npz"
 
 
+def to_2d(a: np.ndarray) -> np.ndarray:
+    if a.ndim == 1:
+        return a.reshape(-1, 1)
+    return a.reshape(a.shape[0], -1)
+
+
 def build_fused_features(z: np.lib.npyio.NpzFile) -> np.ndarray:
-    arrs = [z[k].reshape(z[k].shape[0], -1) for k in FEATURE_KEYS]
+    arrs = [to_2d(z[k]) for k in FEATURE_KEYS]
     t = min(
         [a.shape[0] for a in arrs]
         + [z["movement:is_valid"].shape[0], z["smplh:is_valid"].shape[0]]
