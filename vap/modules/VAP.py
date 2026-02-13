@@ -189,13 +189,23 @@ class VAP(nn.Module):
         self.objective = VAPObjective(bin_times=bin_times, frame_hz=frame_hz)
         self.frame_hz = frame_hz
         self.dim: int = getattr(self.transformer, "dim", 256)
-
         self.video_dim = video_dim
-        in_dim = self.encoder.dim + self.video_dim
-        self.feature_projection = (
-            ProjectionLayer(in_dim, self.transformer.dim)
-            if in_dim != self.transformer.dim
-            else nn.Identity()
+        
+        # in_dim = self.encoder.dim + self.video_dim
+        # self.feature_projection = (
+        #     ProjectionLayer(in_dim, self.transformer.dim)
+        #     if in_dim != self.transformer.dim
+        #     else nn.Identity()
+        # )
+
+        in_dim = self.encoder.dim + self.video_dim # MLP projection instead of Linear projection 
+        self.feature_projection = nn.Sequential(
+            nn.LayerNorm(in_dim),
+            nn.Linear(in_dim, self.dim * 2),
+            nn.GELU(),
+            nn.Dropout(0.1),
+            nn.Linear(self.dim * 2, self.dim),
+            nn.Dropout(0.1),
         )
 
         # Outputs
