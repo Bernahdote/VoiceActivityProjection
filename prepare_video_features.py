@@ -29,7 +29,10 @@ OUTPUT_TAIL = ".f.npz"
 def to_2d(a: np.ndarray) -> np.ndarray:
     if a.ndim == 1:
         return a.reshape(-1, 1)
-    return a.reshape(a.shape[0], -1)
+    if a.ndim == 0:
+        return a.reshape(1, 1)
+    d = int(np.prod(a.shape[1:], dtype=np.int64))
+    return a.reshape(a.shape[0], d)
 
 
 def build_fused_features(z: np.lib.npyio.NpzFile) -> np.ndarray:
