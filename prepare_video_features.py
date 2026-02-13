@@ -4,6 +4,7 @@ from argparse import ArgumentParser
 from pathlib import Path
 
 import numpy as np
+from tqdm import tqdm
 
 
 
@@ -69,7 +70,7 @@ def main() -> None:
     n_skip = 0
     n_fail = 0
 
-    for src in files:
+    for src in tqdm(files, desc="Preparing fused video features"):
         dst = output_path(src, input_root, output_root)
         if dst.exists() and not args.overwrite:
             n_skip += 1
