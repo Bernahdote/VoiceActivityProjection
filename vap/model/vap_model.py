@@ -27,18 +27,21 @@ class VAP(nn.Module):
         transformer: nn.Module,
         bin_times: list[float] = [0.2, 0.4, 0.6, 0.8],
         frame_hz: int = 50,
+        video_dim: int = 0, 
     ):
         super().__init__()
         self.enc_dim = getattr(encoder, "dim")
         self.dim: int = getattr(transformer, "dim")
         self.frame_hz = frame_hz
         self.objective = VAPObjective(bin_times=bin_times, frame_hz=frame_hz)
+        self.video_dim = video_dim 
 
         # Layers
         self.encoder = encoder
+        in_dim = self.enc_dim + self.video_dim
         self.feature_projection = (
-            ProjectionLayer(self.enc_dim, self.dim)
-            if encoder.dim != transformer.dim
+            ProjectionLayer(in_dim, self.dim)
+            if in_dim != self.dim
             else nn.Identity()
         )
         self.transformer = transformer
@@ -75,12 +78,14 @@ class VAP(nn.Module):
     def probs(
         self,
         waveform: Tensor,
+        video_features_a: Tensor,
+        video_features_b: Tensor,
         vad: Optional[Tensor] = None,
         now_lims: list[int] = [0, 1],
         future_lims: list[int] = [2, 3],
     ):
         """"""
-        out = self(waveform)  # logits, vad, s1, s2, p1, p2, p
+        out = self(waveform, video_features_a=video_features_a, video_features_b=video_features_b)  # logits, vad, s1, s2, p1, p2, p
 
         # Probabilites and Entropy
         probs = out["logits"].softmax(dim=-1)
@@ -108,8 +113,12 @@ class VAP(nn.Module):
         x2 = self.encoder(audio[:, 1:])  # speaker 2
         return x1, x2
 
-    def forward(self, waveform: Tensor, **kwargs):
+    def forward(self, waveform: Tensor, video_features_a: Tensor, video_features_b: Tensor, **kwargs):
         x1, x2 = self.encode_audio(waveform)
+
+        x1 = torch.cat((x1, video_features_a), dim=-1) # Concatenating video features and audio 
+        x2 = torch.cat((x2, video_features_b), dim=-1) # Concatenating video features and audio
+
         s1 = self.feature_projection(x1)
         s2 = self.feature_projection(x2)
         p1, p2 = self.transformer(s1, s2)
@@ -332,7 +341,7 @@ class VAPModule(L.LightningModule):
         """
 
         # Forward
-        out = self(batch["waveform"])
+        out = self(batch["waveform"], video_features_a=batch["video_features_a"], video_features_b=batch["video_features_b"])
         labels = self.model.extract_labels(batch["vad"])
 
         # Losses
@@ -406,9 +415,18 @@ def test_forward():
     def time_model(model, batch):
         batch["waveform"] = batch["waveform"].to(model.device)
         batch["vad"] = batch["vad"].to(model.device)
+        batch["video_features_a"] = batch["video_features_a"].to(model.device)
+        batch["video_features_b"] = batch["video_features_b"].to(model.device)
+
+
+
         t = time.time()
         for _ in range(20):
-            out = model(batch["waveform"])
+            out = model(
+                batch["waveform"], 
+                batch["video_features_a"],
+                batch["video_features_b"]
+            )
         t = time.time() - t
         return t
 

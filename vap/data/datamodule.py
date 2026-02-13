@@ -8,6 +8,8 @@ import pandas as pd
 import json
 from typing import Optional, Mapping, Any
 import matplotlib.pyplot as plt
+from pathlib import Path
+import numpy as np
 
 
 from vap.utils.audio import load_waveform, mono_to_stereo
@@ -106,14 +108,14 @@ class VAPDataset(Dataset):
         # TODO: why can this be off, or why bad waveform shapes?
         dur = round(d["end"] - d["start"])
 
-        w1, _ = load_waveform( # WB
+        wa, _ = load_waveform( # WB
             d["audio_path_a"],
             start_time=d["start"],
             end_time=d["end"],
             sample_rate=self.sample_rate,
             mono=True, 
         )
-        w2, _ = load_waveform( # WB
+        wb, _ = load_waveform( # WB
             d["audio_path_b"],
             start_time=d["start"],
             end_time=d["end"],
@@ -121,8 +123,40 @@ class VAPDataset(Dataset):
             mono=True, 
         )
 
-        w = torch.cat([w1, w2], dim=0)  # WB
-       
+        w = torch.cat([wa, wb], dim=0)  # WB
+
+        video_path_a = str(Path(d["audio_path_a"]).with_suffix(".npz")) # WB
+        video_path_b = str(Path(d["audio_path_b"]).with_suffix(".npz")) # WB
+
+
+        VIDEO_KEYS = [
+        "movement_v4:gaze_encodings",
+        "movement_v4:head_encodings",
+        "movement_v4:expression",
+        "movement_v4:alignment_head_rotation",
+        "movement_v4:FAUToken",
+        "smplh:body_pose",
+        "smplh:left_hand_pose",
+        "smplh:right_hand_pose",
+        ]
+
+        za = np.load(video_path_a, allow_pickle=False)
+        zb = np.load(video_path_b, allow_pickle=False)
+
+        fa = torch.from_numpy(np.concatenate([za[k] for k in VIDEO_KEYS], axis=-1)).float()
+        fb = torch.from_numpy(np.concatenate([zb[k] for k in VIDEO_KEYS], axis=-1)).float()
+
+        src_fps = 30.0
+        start_idx = int(d["start"] * src_fps)
+        end_idx = int(d["end"] * src_fps)
+
+        fa = fa[start_idx:end_idx]
+        fb = fb[start_idx:end_idx]
+
+
+        fa = torch.nn.functional.interpolate(fa.T.unsqueeze(0), size=int((d["end"] - d["start"])* self.frame_hz), mode="linear", align_corners=False).squeeze(0).T
+        fb = torch.nn.functional.interpolate(fb.T.unsqueeze(0), size=int((d["end"] - d["start"])* self.frame_hz), mode="linear", align_corners=False).squeeze(0).T
+
 
         # TODO: Assume that the clip start at 0 and pad end? vice versa? how is the vad_list?
         # Ensure correct duration
@@ -148,7 +182,9 @@ class VAPDataset(Dataset):
             "session": d.get("session", ""),
             "waveform": w,
             "vad": vad,
-            "dataset": d.get("dataset", ""),
+            "dataset": d.get("dataset", ""), 
+            "video_features_a": fa, # WB
+            "video_features_b": fb, # WB
         }
 
 
@@ -257,9 +293,13 @@ class VAPDataModule(L.LightningDataModule):
             batch_stacked["dataset"].append(b["dataset"])
             batch_stacked["waveform"].append(b["waveform"])
             batch_stacked["vad"].append(b["vad"])
+            batch_stacked["video_features_a"].append(b["video_features_a"]) # WB
+            batch_stacked["video_features_b"].append(b["video_features_b"]) # WB
 
         batch_stacked["waveform"] = torch.stack(batch_stacked["waveform"])
         batch_stacked["vad"] = torch.stack(batch_stacked["vad"])
+        batch_stacked["video_features_a"] = torch.stack(batch_stacked["video_features_a"]) # WB
+        batch_stacked["video_features_b"] = torch.stack(batch_stacked["video_features_b"]) # WB
         return batch_stacked
 
     def train_dataloader(self):

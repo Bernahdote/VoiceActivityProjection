@@ -69,6 +69,9 @@ class VAPModule(L.LightningModule):
                 self.log(f"{split}_f1_{event_name}", score["f1"], sync_dist=True)
                 self.log(f"{split}_acc_{event_name}_0", score["acc"][0], sync_dist=True)
                 self.log(f"{split}_acc_{event_name}_1", score["acc"][1], sync_dist=True)
+                if event_name == "hs":
+                    bacc = (score["acc"][0] + score["acc"][1]) / 2
+                    self.log(f"{split}_bacc_{event_name}", bacc, sync_dist=True)
 
     def _step(
         self, batch: Batch, split: str = "train", reduction: str = "mean"
