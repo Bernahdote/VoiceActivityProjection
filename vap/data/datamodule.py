@@ -155,7 +155,9 @@ class VAPDataset(Dataset):
         fa = fa[start_idx:end_idx]
         fb = fb[start_idx:end_idx]
 
-        expected_src_len = max(1, int((d["end"] - d["start"]) * src_fps))
+        window_dur = float(d["end"] - d["start"])
+        expected_src_len = max(1, int(round(window_dur * src_fps)))
+        target_len = max(1, int(round(window_dur * self.frame_hz)))
 
         if fa.shape[0] == 0:
             fa = torch.zeros((expected_src_len, fa.shape[1]), dtype=fa.dtype)
@@ -173,9 +175,16 @@ class VAPDataset(Dataset):
             pad_n = expected_src_len - fb.shape[0]
             fb = torch.cat([fb, fb[-1:].repeat(pad_n, 1)], dim=0)
 
+        fa = fa[:target_len]
+        fb = fb[:target_len]
+        if fa.shape[0] < target_len:
+            fa = torch.cat([fa, fa[-1:].repeat(target_len - fa.shape[0], 1)], dim=0)
+        if fb.shape[0] < target_len:
+            fb = torch.cat([fb, fb[-1:].repeat(target_len - fb.shape[0], 1)], dim=0)
 
-        fa = torch.nn.functional.interpolate(fa.T.unsqueeze(0), size=int((d["end"] - d["start"])* self.frame_hz), mode="linear", align_corners=False).squeeze(0).T
-        fb = torch.nn.functional.interpolate(fb.T.unsqueeze(0), size=int((d["end"] - d["start"])* self.frame_hz), mode="linear", align_corners=False).squeeze(0).T
+
+        fa = torch.nn.functional.interpolate(fa.T.unsqueeze(0), size=target_len, mode="linear", align_corners=False).squeeze(0).T
+        fb = torch.nn.functional.interpolate(fb.T.unsqueeze(0), size=target_len, mode="linear", align_corners=False).squeeze(0).T
 
 
         # TODO: Assume that the clip start at 0 and pad end? vice versa? how is the vad_list?
