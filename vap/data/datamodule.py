@@ -125,34 +125,13 @@ class VAPDataset(Dataset):
 
         w = torch.cat([wa, wb], dim=0)  # WB
 
-        video_path_a = str(Path(d["audio_path_a"]).with_suffix(".npz")) # WB
-        video_path_b = str(Path(d["audio_path_b"]).with_suffix(".npz")) # WB
+        video_path_a = str(Path(d["audio_path_a"]).with_suffix(".f.npz")) # WB
+        video_path_b = str(Path(d["audio_path_b"]).with_suffix(".f.npz")) # WB
 
         za = np.load(video_path_a, allow_pickle=False)
         zb = np.load(video_path_b, allow_pickle=False)
-
-
-        KEYS = [
-            "movement:gaze_encodings",
-            "movement:head_encodings",
-            "movement:expression",
-            "movement:alignment_head_rotation",
-            "movement:FAUToken",
-            "smplh:body_pose",
-            "smplh:left_hand_pose",
-            "smplh:right_hand_pose",
-        ]
-
-        def build_feats(z):
-            arrs = [z[k].reshape(z[k].shape[0], -1) for k in KEYS]
-            T = min([a.shape[0] for a in arrs] + [z["movement:is_valid"].shape[0], z["smplh:is_valid"].shape[0]])
-            arrs = [a[:T] for a in arrs]
-            valid = z["movement:is_valid"][:T].reshape(-1).astype(bool) & z["smplh:is_valid"][:T].reshape(-1).astype(bool)
-            x = np.concatenate([a[valid] for a in arrs], axis=-1) if valid.any() else np.concatenate(arrs, axis=-1)
-            return torch.from_numpy(x).float()
-
-        fa = build_feats(za)
-        fb = build_feats(zb)
+        fa = torch.from_numpy(za["features"]).float()
+        fb = torch.from_numpy(zb["features"]).float()
 
         src_fps = 30.0
         start_idx = int(d["start"] * src_fps)
