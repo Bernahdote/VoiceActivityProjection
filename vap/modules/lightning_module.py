@@ -84,7 +84,11 @@ class VAPModule(L.LightningModule):
             out:        dict, ['logits', 'vad', 'vap_loss', 'vad_loss']
         """
         labels = self.model.extract_labels(batch["vad"])
-        out = self(batch["waveform"])
+        out = self(
+            batch["waveform"],
+            video_features_a=batch["video_features_a"],
+            video_features_b=batch["video_features_b"],
+        )
 
         out["vap_loss"] = self.model.objective.loss_vap(
             out["logits"], labels, reduction=reduction

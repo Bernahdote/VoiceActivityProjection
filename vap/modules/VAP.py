@@ -181,6 +181,7 @@ class VAP(nn.Module):
         transformer: nn.Module,
         bin_times: list[float] = [0.2, 0.4, 0.6, 0.8],
         frame_hz: int = 50,
+        video_dim: int = 0,
     ):
         super().__init__()
         self.encoder = encoder
@@ -189,11 +190,13 @@ class VAP(nn.Module):
         self.frame_hz = frame_hz
         self.dim: int = getattr(self.transformer, "dim", 256)
 
-        self.feature_projection = nn.Identity()
-        if self.encoder.dim != self.transformer.dim:
-            self.feature_projection = ProjectionLayer(
-                self.encoder.dim, self.transformer.dim
-            )
+        self.video_dim = video_dim
+        in_dim = self.encoder.dim + self.video_dim
+        self.feature_projection = (
+            ProjectionLayer(in_dim, self.transformer.dim)
+            if in_dim != self.transformer.dim
+            else nn.Identity()
+        )
 
         # Outputs
         # Voice activity objective -> x1, x2 -> logits ->  BCE
@@ -233,8 +236,21 @@ class VAP(nn.Module):
         logits = self.vap_head(x)
         return logits, vad
 
-    def forward(self, waveform: Tensor, attention: bool = False) -> OUT:
+    def forward(
+        self,
+        waveform: Tensor,
+        video_features_a: Optional[Tensor] = None,
+        video_features_b: Optional[Tensor] = None,
+        attention: bool = False,
+    ) -> OUT:
         x1, x2 = self.encode_audio(waveform)
+        if self.video_dim > 0:
+            if video_features_a is None or video_features_b is None:
+                raise ValueError(
+                    "video_features_a and video_features_b must be provided when video_dim > 0."
+                )
+            x1 = torch.cat((x1, video_features_a), dim=-1)
+            x2 = torch.cat((x2, video_features_b), dim=-1)
         x1 = self.feature_projection(x1)
         x2 = self.feature_projection(x2)
         out = self.transformer(x1, x2, attention=attention)
@@ -334,12 +350,18 @@ class VAP(nn.Module):
     def probs(
         self,
         waveform: Tensor,
+        video_features_a: Optional[Tensor] = None,
+        video_features_b: Optional[Tensor] = None,
         vad: Optional[Tensor] = None,
         now_lims: list[int] = [0, 1],
         future_lims: list[int] = [2, 3],
     ) -> OUT:
         """"""
-        out = self(waveform)
+        out = self(
+            waveform,
+            video_features_a=video_features_a,
+            video_features_b=video_features_b,
+        )
         probs = out["logits"].softmax(dim=-1)
         vap_vad = out["vad"].sigmoid()
         h = self.entropy(probs)

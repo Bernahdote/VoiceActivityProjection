@@ -128,8 +128,11 @@ class VAPDataset(Dataset):
         video_path_a = str(Path(d["audio_path_a"]).with_suffix(".npz")) # WB
         video_path_b = str(Path(d["audio_path_b"]).with_suffix(".npz")) # WB
 
+        za = np.load(video_path_a, allow_pickle=False)
+        zb = np.load(video_path_b, allow_pickle=False)
 
-        VIDEO_KEYS = [
+
+        KEYS = [
             "movement:gaze_encodings",
             "movement:head_encodings",
             "movement:expression",
@@ -140,13 +143,16 @@ class VAPDataset(Dataset):
             "smplh:right_hand_pose",
         ]
 
-        # WB: make use of the gates that we found? 
+        def build_feats(z):
+            arrs = [z[k].reshape(z[k].shape[0], -1) for k in KEYS]
+            T = min([a.shape[0] for a in arrs] + [z["movement:is_valid"].shape[0], z["smplh:is_valid"].shape[0]])
+            arrs = [a[:T] for a in arrs]
+            valid = z["movement:is_valid"][:T].reshape(-1).astype(bool) & z["smplh:is_valid"][:T].reshape(-1).astype(bool)
+            x = np.concatenate([a[valid] for a in arrs], axis=-1) if valid.any() else np.concatenate(arrs, axis=-1)
+            return torch.from_numpy(x).float()
 
-        za = np.load(video_path_a, allow_pickle=False)
-        zb = np.load(video_path_b, allow_pickle=False)
-
-        fa = torch.from_numpy(np.concatenate([za[k].reshape(za[k].shape[0], -1) for k in VIDEO_KEYS], axis=-1)).float()
-        fb = torch.from_numpy(np.concatenate([zb[k].reshape(zb[k].shape[0], -1) for k in VIDEO_KEYS], axis=-1)).float()
+        fa = build_feats(za)
+        fb = build_feats(zb)
 
         src_fps = 30.0
         start_idx = int(d["start"] * src_fps)
