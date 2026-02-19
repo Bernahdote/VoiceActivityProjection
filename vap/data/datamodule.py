@@ -18,16 +18,6 @@ from vap.utils.plot import plot_melspectrogram, plot_vad
 
 
 SAMPLE = Mapping[str, Tensor]
-FEATURE_KEYS = [
-    "movement:gaze_encodings",
-    "movement:head_encodings",
-    "movement:expression",
-    "movement:alignment_head_rotation",
-    "movement:FAUToken",
-    "smplh:body_pose",
-    "smplh:left_hand_pose",
-    "smplh:right_hand_pose",
-]
 
 
 def load_df(path: str) -> pd.DataFrame:
@@ -68,30 +58,6 @@ def force_correct_nsamples(w: Tensor, n_samples: int) -> Tensor:
     #     w = torch.cat([w, torch.zeros_like(w)[:, : n_samples - w.shape[-1]]], dim=-1)
     #
     # return w
-
-
-def _to_2d(a: np.ndarray) -> np.ndarray:
-    if a.ndim == 1:
-        return a.reshape(-1, 1)
-    if a.ndim == 0:
-        return a.reshape(1, 1)
-    d = int(np.prod(a.shape[1:], dtype=np.int64))
-    return a.reshape(a.shape[0], d)
-
-
-def _build_fused_features(z: np.lib.npyio.NpzFile) -> np.ndarray:
-    arrs = [_to_2d(z[k]) for k in FEATURE_KEYS]
-    t = min(
-        [a.shape[0] for a in arrs]
-        + [z["movement:is_valid"].shape[0], z["smplh:is_valid"].shape[0]]
-    )
-    arrs = [a[:t] for a in arrs]
-    valid = z["movement:is_valid"][:t].reshape(-1).astype(bool)
-    valid &= z["smplh:is_valid"][:t].reshape(-1).astype(bool)
-    fused = np.concatenate(arrs, axis=-1)
-    if not valid.all():
-        fused[~valid] = 0.0
-    return fused.astype(np.float32)
 
 
 def plot_dset_sample(d):
@@ -162,18 +128,10 @@ class VAPDataset(Dataset):
         video_path_a = str(Path(d["audio_path_a"]).with_suffix(".f.npz")) # WB
         video_path_b = str(Path(d["audio_path_b"]).with_suffix(".f.npz")) # WB
 
-        try:
-            za = np.load(video_path_a, allow_pickle=False)
-            zb = np.load(video_path_b, allow_pickle=False)
-            fa = torch.from_numpy(za["features"]).float()
-            fb = torch.from_numpy(zb["features"]).float()
-        except Exception:
-            raw_path_a = str(Path(d["audio_path_a"]).with_suffix(".npz"))
-            raw_path_b = str(Path(d["audio_path_b"]).with_suffix(".npz"))
-            za = np.load(raw_path_a, allow_pickle=False)
-            zb = np.load(raw_path_b, allow_pickle=False)
-            fa = torch.from_numpy(_build_fused_features(za)).float()
-            fb = torch.from_numpy(_build_fused_features(zb)).float()
+        za = np.load(video_path_a, allow_pickle=False)
+        zb = np.load(video_path_b, allow_pickle=False)
+        fa = torch.from_numpy(za["features"]).float()
+        fb = torch.from_numpy(zb["features"]).float()
 
         src_fps = 30.0
         start_idx = int(d["start"] * src_fps)
