@@ -36,6 +36,8 @@ example/*.json
 
 # One-off local script
 load_stereo.py
+epoch=13-step=24514.ckpt
+*.mp4
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

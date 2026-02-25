@@ -8,8 +8,8 @@ from tqdm import tqdm
 
 
 
-ROOT = Path("/mnt/sda/willem/datasets/seamless_interaction") #Linux
-#ROOT = Path("/Users/willemberner/datasets/seamless_interaction") #Mac
+#ROOT = Path("/mnt/sda/willem/datasets/seamless_interaction") #Linux
+ROOT = Path("/Users/willemberner/datasets/seamless_interaction") #Mac
 
 
 

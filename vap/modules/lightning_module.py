@@ -69,7 +69,7 @@ class VAPModule(L.LightningModule):
                 self.log(f"{split}_f1_{event_name}", score["f1"], sync_dist=True)
                 self.log(f"{split}_acc_{event_name}_0", score["acc"][0], sync_dist=True)
                 self.log(f"{split}_acc_{event_name}_1", score["acc"][1], sync_dist=True)
-                if event_name == "hs":
+                if event_name in {"hs", "sp", "ls"}:
                     bacc = (score["acc"][0] + score["acc"][1]) / 2
                     self.log(f"{split}_bacc_{event_name}", bacc, sync_dist=True)
 
@@ -94,6 +94,7 @@ class VAPModule(L.LightningModule):
             out["logits"], labels, reduction=reduction
         )
         out["va_loss"] = self.model.objective.loss_vad(out["vad"], batch["vad"])
+        out["total_loss"] = out["vap_loss"] + out["va_loss"]
         self.metric_update(out["logits"], batch["vad"], split=split)
 
         # Log results
@@ -111,8 +112,7 @@ class VAPModule(L.LightningModule):
 
     def training_step(self, batch: Batch, *args, **kwargs):
         out = self._step(batch)
-        loss = out["vap_loss"] + out["va_loss"]
-        return {"loss": loss}
+        return {"loss": out["total_loss"]}
 
     def validation_step(self, batch: Batch, *args, **kwargs):
         _ = self._step(batch, split="val")

@@ -1,22 +1,25 @@
+import math
+import subprocess
+import tempfile
+from pathlib import Path
 
-import torch
-from vap.utils.audio import load_waveform
-from vap.model.vap_model import VAPModule
 import matplotlib.pyplot as plt
 import numpy as np
-import subprocess
-from pathlib import Path
-import tempfile
-import math
+import torch
+import torch.nn.functional as F
 
-ckpt = "/Users/willemberner/Desktop/Exjobb/epoch=7-step=14008.ckpt"
+from vap.modules.lightning_module import VAPModule
+from vap.utils.audio import load_waveform
+
+ckpt = "/Users/willemberner/Desktop/Exjobb/VoiceActivityProjection/epoch=13-step=24514.ckpt"
 audio_a = "/Users/willemberner/datasets/seamless_interaction/improvised/dev/0000/0038/V00_S2020_I00000686_P1275A.wav"
 audio_b = "/Users/willemberner/datasets/seamless_interaction/improvised/dev/0000/0032/V00_S2020_I00000686_P1276A.wav"
 video_a = "/Users/willemberner/datasets/seamless_interaction/improvised/dev/0000/0038/V00_S2020_I00000686_P1275A.mp4"
 video_b = "/Users/willemberner/datasets/seamless_interaction/improvised/dev/0000/0032/V00_S2020_I00000686_P1276A.mp4"
+npz_a = "/Users/willemberner/datasets/seamless_interaction/improvised/dev/0000/0038/V00_S2020_I00000686_P1275A.f.npz"
+npz_b = "/Users/willemberner/datasets/seamless_interaction/improvised/dev/0000/0032/V00_S2020_I00000686_P1276A.f.npz"
 
-
-
+start_time = 0.0
 window_sec = 20.0
 fps = 40
 pixels_per_sec = 100
@@ -28,6 +31,8 @@ video_frame_q = "4"
 preview_seconds = 60.0
 top_k = 5
 topk_gap_rows = 1
+thr = 0.5
+src_fps = 30.0
 
 
 def run_ffmpeg(args):
@@ -55,29 +60,121 @@ def build_topk_window_rgb(topk_states, gray_rgb, blue_rgb, orange_rgb, gap_rows)
     return window_rgb, row_offsets
 
 
-w1, _ = load_waveform(
-    audio_a, sample_rate=16000, mono=True, start_time=0, end_time=preview_seconds
-)
-w2, _ = load_waveform(
-    audio_b, sample_rate=16000, mono=True, start_time=0, end_time=preview_seconds
-)
+def load_npz_features(
+    npz_path: str,
+    start_time_local: float,
+    end_time_local: float,
+    src_fps_local: float,
+    target_len: int,
+) -> torch.Tensor:
+    z = np.load(npz_path, allow_pickle=False)
+    if "features" not in z:
+        raise KeyError(f"Expected key 'features' in {npz_path}")
+    feat = torch.from_numpy(z["features"]).float()
+    if feat.ndim != 2:
+        raise ValueError(
+            f"Expected feature shape (T, D) in {npz_path}, got {tuple(feat.shape)}"
+        )
+
+    start_idx = int(start_time_local * src_fps_local)
+    end_idx = int(end_time_local * src_fps_local)
+    feat = feat[start_idx:end_idx]
+
+    seg_dur = max(0.0, end_time_local - start_time_local)
+    expected_src_len = max(1, int(round(seg_dur * src_fps_local)))
+
+    if feat.shape[0] == 0:
+        feat = torch.zeros((expected_src_len, feat.shape[-1]), dtype=torch.float32)
+
+    feat = feat[:expected_src_len]
+    if feat.shape[0] < expected_src_len:
+        pad_n = expected_src_len - feat.shape[0]
+        feat = torch.cat([feat, feat[-1:].repeat(pad_n, 1)], dim=0)
+
+    feat = F.interpolate(
+        feat.T.unsqueeze(0),
+        size=target_len,
+        mode="linear",
+        align_corners=False,
+    ).squeeze(0).T
+    return feat
 
 
-w = torch.cat([w1, w2], dim=0).unsqueeze(0)  # [1, 2, T]
+for p in [ckpt, audio_a, audio_b, video_a, video_b, npz_a, npz_b]:
+    if not Path(p).exists():
+        raise FileNotFoundError(f"Missing file: {p}")
 
-module = VAPModule.load_from_checkpoint(ckpt)
-model = module.model.eval()
+device = "cuda" if torch.cuda.is_available() else "cpu"
+module = VAPModule.load_from_checkpoint(ckpt, map_location=device)
+model = module.model.to(device).eval()
 if not hasattr(model, "video_dim"):
-    # Backward compatibility for checkpoints created before `video_dim` existed.
     model.video_dim = 0
 
-with torch.no_grad():
-    out = model.probs(w)
+sr = model.sample_rate
+frame_hz = model.frame_hz
 
-frame_hz = 50  # model frame rate
-sr = 16000
-thr = 0.5
-vad_thr = 0.5
+segment_start = start_time
+segment_end_req = segment_start + preview_seconds
+
+w1, _ = load_waveform(
+    audio_a,
+    sample_rate=sr,
+    mono=True,
+    start_time=segment_start,
+    end_time=segment_end_req,
+)
+w2, _ = load_waveform(
+    audio_b,
+    sample_rate=sr,
+    mono=True,
+    start_time=segment_start,
+    end_time=segment_end_req,
+)
+
+n_samples = min(w1.shape[-1], w2.shape[-1])
+if n_samples == 0:
+    raise RuntimeError("Loaded empty audio segment.")
+w1 = w1[..., :n_samples]
+w2 = w2[..., :n_samples]
+w = torch.cat([w1, w2], dim=0).unsqueeze(0)  # [1, 2, T]
+
+preview_sec = n_samples / sr
+segment_end = segment_start + preview_sec
+
+with torch.no_grad():
+    x1, _ = model.encode_audio(w.to(device))
+target_frames = x1.shape[1]
+
+feat_a = load_npz_features(
+    npz_a,
+    start_time_local=segment_start,
+    end_time_local=segment_end,
+    src_fps_local=src_fps,
+    target_len=target_frames,
+)
+feat_b = load_npz_features(
+    npz_b,
+    start_time_local=segment_start,
+    end_time_local=segment_end,
+    src_fps_local=src_fps,
+    target_len=target_frames,
+)
+
+if feat_a.shape != feat_b.shape:
+    raise ValueError(
+        f"Feature shape mismatch: A {tuple(feat_a.shape)} vs B {tuple(feat_b.shape)}"
+    )
+if model.video_dim > 0 and feat_a.shape[-1] != model.video_dim:
+    raise ValueError(
+        f"Feature dim {feat_a.shape[-1]} does not match model.video_dim={model.video_dim}"
+    )
+
+with torch.no_grad():
+    out = model.probs(
+        w.to(device),
+        video_features_a=feat_a.unsqueeze(0).to(device),
+        video_features_b=feat_b.unsqueeze(0).to(device),
+    )
 
 t_frame = torch.arange(out["p_now"].shape[1]) / frame_hz
 t_audio = torch.arange(w.shape[-1]) / sr
@@ -143,8 +240,6 @@ ax_wav_a_vad.set_ylim(-0.05, 1.05)
 ax_wav_b_vad.set_ylim(-0.05, 1.05)
 ax_wav_a_vad.set_ylabel("VAD prob", color="red")
 ax_wav_b_vad.set_ylabel("VAD prob", color="red")
-
-
 
 # p_now / p_future with threshold fill
 x = t_frame.cpu().numpy()
@@ -258,6 +353,8 @@ with tempfile.TemporaryDirectory(dir=temp_root) as tmpdir:
         [
             "ffmpeg",
             "-y",
+            "-ss",
+            str(segment_start),
             "-i",
             video_a,
             "-vf",
@@ -274,6 +371,8 @@ with tempfile.TemporaryDirectory(dir=temp_root) as tmpdir:
         [
             "ffmpeg",
             "-y",
+            "-ss",
+            str(segment_start),
             "-i",
             video_b,
             "-vf",
@@ -342,8 +441,16 @@ with tempfile.TemporaryDirectory(dir=temp_root) as tmpdir:
         [
             "ffmpeg",
             "-y",
+            "-ss",
+            str(segment_start),
+            "-t",
+            str(preview_sec),
             "-i",
             audio_a,
+            "-ss",
+            str(segment_start),
+            "-t",
+            str(preview_sec),
             "-i",
             audio_b,
             "-filter_complex",
@@ -352,8 +459,6 @@ with tempfile.TemporaryDirectory(dir=temp_root) as tmpdir:
             "aac",
             "-b:a",
             "192k",
-            "-t",
-            str(preview_sec),
             str(mixed_audio),
         ],
     )
