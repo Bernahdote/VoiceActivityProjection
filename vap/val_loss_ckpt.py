@@ -35,9 +35,35 @@ def _to_device(batch: dict[str, Any], device: torch.device) -> dict[str, Any]:
     return out
 
 
+def _shuffle_full_feature_time_(x: torch.Tensor) -> None:
+    # x shape: (B, T, D). Shuffle full visual feature vector over time.
+    bsz = x.shape[0]
+    n_frames = x.shape[1]
+    for b in range(bsz):
+        perm = torch.randperm(n_frames, device=x.device)
+        x[b] = x[b, perm]
+
+
+def _apply_visual_mode(batch: dict[str, Any], visual_mode: str) -> None:
+    if visual_mode == "as_is":
+        return
+    if visual_mode == "zero":
+        batch["video_features_a"] = torch.zeros_like(batch["video_features_a"])
+        batch["video_features_b"] = torch.zeros_like(batch["video_features_b"])
+        return
+    if visual_mode == "shuffle":
+        _shuffle_full_feature_time_(batch["video_features_a"])
+        _shuffle_full_feature_time_(batch["video_features_b"])
+        return
+    raise ValueError("visual_mode must be one of: all, as_is, zero, shuffle")
+
+
 @torch.inference_mode()
-def _validation_loss_with_zero_visuals(
-    module: torch.nn.Module, val_loader: Any, device: torch.device
+def _validation_metrics(
+    module: torch.nn.Module,
+    val_loader: Any,
+    device: torch.device,
+    visual_mode: str,
 ) -> tuple[float, dict[str, float]]:
     module = module.to(device)
     module.eval()
@@ -52,10 +78,9 @@ def _validation_loss_with_zero_visuals(
             metric = metric.to(device)
             module.val_metric = metric
 
-    for batch in tqdm(val_loader, desc="Validation", leave=False):
+    for batch in tqdm(val_loader, desc=f"Validation [{visual_mode}]", leave=False):
         batch = _to_device(batch, device)
-        batch["video_features_a"] = torch.zeros_like(batch["video_features_a"])
-        batch["video_features_b"] = torch.zeros_like(batch["video_features_b"])
+        _apply_visual_mode(batch=batch, visual_mode=visual_mode)
 
         out = module.model(
             batch["waveform"],
@@ -107,6 +132,11 @@ def main(cfg: DictConfig) -> None:
     if not checkpoint_path.exists():
         raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
 
+    visual_mode = str(cfg.get("visual_mode", "all"))
+    valid_modes = {"all", "as_is", "zero", "shuffle"}
+    if visual_mode not in valid_modes:
+        raise ValueError("visual_mode must be one of: all, as_is, zero, shuffle")
+
     module = instantiate(cfg.module)
     datamodule = instantiate(cfg.datamodule)
     _load_state_dict(module, checkpoint_path)
@@ -122,11 +152,14 @@ def main(cfg: DictConfig) -> None:
     else:
         device = torch.device(device_str)
 
-    val_loss, bacc = _validation_loss_with_zero_visuals(module, val_loader, device)
-    print(f"val_loss: {val_loss:.6f}")
-    for event_name in ["hs", "sp", "ls"]:
-        if event_name in bacc:
-            print(f"bacc_{event_name}: {bacc[event_name]:.6f}")
+    modes = ["as_is", "zero", "shuffle"] if visual_mode == "all" else [visual_mode]
+    for mode in modes:
+        val_loss, bacc = _validation_metrics(module, val_loader, device, mode)
+        print(f"visual_mode: {mode}")
+        print(f"val_loss: {val_loss:.6f}")
+        for event_name in ["hs", "sp", "ls"]:
+            if event_name in bacc:
+                print(f"bacc_{event_name}: {bacc[event_name]:.6f}")
 
 
 if __name__ == "__main__":
