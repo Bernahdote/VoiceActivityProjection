@@ -171,10 +171,6 @@ class VAPDataset(Dataset):
         fa = torch.nn.functional.interpolate(fa.T.unsqueeze(0), size=target_len, mode="linear", align_corners=False).squeeze(0).T
         fb = torch.nn.functional.interpolate(fb.T.unsqueeze(0), size=target_len, mode="linear", align_corners=False).squeeze(0).T
         
-        
-        ### TRAINING MODEL WITH VIDEO FEATURES = 0!! 
-        fa = torch.zeros_like(fa)
-        fb = torch.zeros_like(fb)
 
         # TODO: Assume that the clip start at 0 and pad end? vice versa? how is the vad_list?
         # Ensure correct duration
