@@ -55,7 +55,7 @@ def _apply_visual_mode(batch: dict[str, Any], visual_mode: str) -> None:
         _shuffle_full_feature_time_(batch["video_features_a"])
         _shuffle_full_feature_time_(batch["video_features_b"])
         return
-    raise ValueError("visual_mode must be one of: all, as_is, zero, shuffle")
+    raise ValueError("visual_mode must be one of: as_is, zero, shuffle")
 
 
 @torch.inference_mode()
@@ -64,12 +64,13 @@ def _validation_metrics(
     val_loader: Any,
     device: torch.device,
     visual_mode: str,
-) -> tuple[float, dict[str, float]]:
+) -> tuple[dict[str, float], dict[str, float]]:
     module = module.to(device)
     module.eval()
 
     total_examples = 0
-    total_loss_sum = 0.0
+    total_vap_loss_sum = 0.0
+    total_vad_loss_sum = 0.0
 
     metric = getattr(module, "val_metric", None)
     if metric:
@@ -92,18 +93,23 @@ def _validation_metrics(
             out["logits"], labels, reduction="mean"
         )
         vad_loss = module.model.objective.loss_vad(out["vad"], batch["vad"])
-        total_loss = vap_loss + vad_loss
-
         if metric:
             probs = module.model.objective.get_probs(out["logits"])
             metric.update_batch(probs, batch["vad"])
 
         bsz = int(batch["waveform"].shape[0])
         total_examples += bsz
-        total_loss_sum += float(total_loss) * bsz
+        total_vap_loss_sum += float(vap_loss) * bsz
+        total_vad_loss_sum += float(vad_loss) * bsz
 
     if total_examples == 0:
         raise ValueError("Validation dataloader is empty.")
+
+    losses = {
+        "val_loss": total_vap_loss_sum / total_examples,
+        "val_loss_va": total_vad_loss_sum / total_examples,
+    }
+    losses["val_loss_total"] = losses["val_loss"] + losses["val_loss_va"]
 
     bacc: dict[str, float] = {}
     if metric:
@@ -115,7 +121,7 @@ def _validation_metrics(
             acc = scores[event_name]["acc"]
             bacc[event_name] = float((acc[0] + acc[1]) / 2)
 
-    return total_loss_sum / total_examples, bacc
+    return losses, bacc
 
 
 @hydra.main(version_base=None, config_path="conf", config_name="new_vap_home")
@@ -132,10 +138,10 @@ def main(cfg: DictConfig) -> None:
     if not checkpoint_path.exists():
         raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
 
-    visual_mode = str(cfg.get("visual_mode", "shuffle"))
-    valid_modes = {"shuffle"}
+    visual_mode = str(cfg.get("visual_mode", "all"))
+    valid_modes = {"all", "as_is", "zero", "shuffle"}
     if visual_mode not in valid_modes:
-        raise ValueError("visual_mode must be: shuffle")
+        raise ValueError("visual_mode must be one of: all, as_is, zero, shuffle")
 
     module = instantiate(cfg.module)
     datamodule = instantiate(cfg.datamodule)
@@ -152,12 +158,12 @@ def main(cfg: DictConfig) -> None:
     else:
         device = torch.device(device_str)
 
-    val_loss, bacc = _validation_metrics(module, val_loader, device, visual_mode)
-    print(f"visual_mode: {visual_mode}")
-    print(f"val_loss: {val_loss:.6f}")
-    for event_name in ["hs", "sp", "ls"]:
-        if event_name in bacc:
-            print(f"bacc_{event_name}: {bacc[event_name]:.6f}")
+    modes = ["as_is", "zero", "shuffle"] if visual_mode == "all" else [visual_mode]
+    for mode in modes:
+        losses, _ = _validation_metrics(module, val_loader, device, mode)
+        print(f"visual_mode: {mode}")
+        # val_loss is VAP loss only (matches training/W&B val_loss)
+        print(f"val_loss: {losses['val_loss']:.6f}")
 
 
 if __name__ == "__main__":
