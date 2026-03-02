@@ -7,6 +7,7 @@ import torch
 from hydra.utils import instantiate
 from lightning import seed_everything
 from omegaconf import DictConfig, OmegaConf
+from tqdm import tqdm
 
 
 log: logging.Logger = logging.getLogger(__name__)
@@ -51,7 +52,7 @@ def _validation_loss_with_zero_visuals(
             metric = metric.to(device)
             module.val_metric = metric
 
-    for batch in val_loader:
+    for batch in tqdm(val_loader, desc="Validation", leave=False):
         batch = _to_device(batch, device)
         batch["video_features_a"] = torch.zeros_like(batch["video_features_a"])
         batch["video_features_b"] = torch.zeros_like(batch["video_features_b"])
