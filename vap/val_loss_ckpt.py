@@ -132,10 +132,10 @@ def main(cfg: DictConfig) -> None:
     if not checkpoint_path.exists():
         raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
 
-    visual_mode = str(cfg.get("visual_mode", "all"))
-    valid_modes = {"all", "as_is", "zero", "shuffle"}
+    visual_mode = str(cfg.get("visual_mode", "shuffle"))
+    valid_modes = {"shuffle"}
     if visual_mode not in valid_modes:
-        raise ValueError("visual_mode must be one of: all, as_is, zero, shuffle")
+        raise ValueError("visual_mode must be: shuffle")
 
     module = instantiate(cfg.module)
     datamodule = instantiate(cfg.datamodule)
@@ -152,14 +152,12 @@ def main(cfg: DictConfig) -> None:
     else:
         device = torch.device(device_str)
 
-    modes = ["as_is", "zero", "shuffle"] if visual_mode == "all" else [visual_mode]
-    for mode in modes:
-        val_loss, bacc = _validation_metrics(module, val_loader, device, mode)
-        print(f"visual_mode: {mode}")
-        print(f"val_loss: {val_loss:.6f}")
-        for event_name in ["hs", "sp", "ls"]:
-            if event_name in bacc:
-                print(f"bacc_{event_name}: {bacc[event_name]:.6f}")
+    val_loss, bacc = _validation_metrics(module, val_loader, device, visual_mode)
+    print(f"visual_mode: {visual_mode}")
+    print(f"val_loss: {val_loss:.6f}")
+    for event_name in ["hs", "sp", "ls"]:
+        if event_name in bacc:
+            print(f"bacc_{event_name}: {bacc[event_name]:.6f}")
 
 
 if __name__ == "__main__":
