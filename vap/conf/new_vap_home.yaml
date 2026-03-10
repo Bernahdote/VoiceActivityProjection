@@ -8,6 +8,7 @@ datamodule:
   sample_rate: 16000
   frame_hz: 50
   mono: false
+  video_feature_groups: [all]
   batch_size: 4
   num_workers: 4
   pin_memory: true

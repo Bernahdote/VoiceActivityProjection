@@ -115,6 +115,14 @@ class VAP(nn.Module):
 
     def forward(self, waveform: Tensor, video_features_a: Tensor, video_features_b: Tensor, **kwargs):
         x1, x2 = self.encode_audio(waveform)
+        if video_features_a.shape[-1] != self.video_dim:
+            raise ValueError(
+                f"video_features_a has dim={video_features_a.shape[-1]} but model.video_dim={self.video_dim}."
+            )
+        if video_features_b.shape[-1] != self.video_dim:
+            raise ValueError(
+                f"video_features_b has dim={video_features_b.shape[-1]} but model.video_dim={self.video_dim}."
+            )
 
         x1 = torch.cat((x1, video_features_a), dim=-1) # Concatenating video features and audio 
         x2 = torch.cat((x2, video_features_b), dim=-1) # Concatenating video features and audio

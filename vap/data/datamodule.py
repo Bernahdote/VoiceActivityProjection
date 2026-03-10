@@ -19,6 +19,30 @@ from vap.utils.plot import plot_melspectrogram, plot_vad
 
 SAMPLE = Mapping[str, Tensor]
 
+VIDEO_FEATURE_SPECS = [
+    ("gaze", 2),
+    ("head", 3),
+    ("expression", 128),
+    ("alignment_head_rotation", 3),
+    ("fau", 1),
+    ("body_pose", 63),
+    ("left_hand_pose", 45),
+    ("right_hand_pose", 45),
+]
+
+
+def _build_video_feature_slices() -> dict[str, slice]:
+    start = 0
+    out: dict[str, slice] = {}
+    for name, width in VIDEO_FEATURE_SPECS:
+        out[name] = slice(start, start + width)
+        start += width
+    out["all"] = slice(0, start)
+    return out
+
+
+VIDEO_FEATURE_SLICES = _build_video_feature_slices()
+
 
 def load_df(path: str) -> pd.DataFrame:
     def _vl(x):
@@ -86,6 +110,7 @@ class VAPDataset(Dataset):
         sample_rate: int = 16_000,
         frame_hz: int = 50,
         mono: bool = False,
+        video_feature_groups: Optional[list[str]] = None,
     ) -> None:
         self.path = path
         self.df = load_df(path)
@@ -97,9 +122,26 @@ class VAPDataset(Dataset):
 
         self.duration = duration
         self.n_samples = int(self.duration * self.sample_rate)
+        groups = video_feature_groups or ["all"]
+        unknown = [g for g in groups if g not in VIDEO_FEATURE_SLICES]
+        if unknown:
+            allowed = ", ".join(sorted(VIDEO_FEATURE_SLICES.keys()))
+            bad = ", ".join(sorted(unknown))
+            raise ValueError(
+                f"Unknown video_feature_groups: {bad}. Allowed values: {allowed}"
+            )
+        if "all" in groups and len(groups) > 1:
+            raise ValueError("video_feature_groups cannot combine 'all' with other groups.")
+        self.video_feature_groups = groups
 
     def __len__(self) -> int:
         return len(self.df)
+
+    def _select_video_features(self, feats: Tensor) -> Tensor:
+        if self.video_feature_groups == ["all"]:
+            return feats
+        selected = [feats[:, VIDEO_FEATURE_SLICES[g]] for g in self.video_feature_groups]
+        return torch.cat(selected, dim=-1)
 
     def __getitem__(self, idx: int) -> SAMPLE:
         d = self.df.iloc[idx]
@@ -132,6 +174,8 @@ class VAPDataset(Dataset):
         zb = np.load(video_path_b, allow_pickle=False)
         fa = torch.from_numpy(za["features"]).float()
         fb = torch.from_numpy(zb["features"]).float()
+        fa = self._select_video_features(fa)
+        fb = self._select_video_features(fb)
 
         src_fps = 30.0
         start_idx = int(d["start"] * src_fps)
@@ -216,6 +260,7 @@ class VAPDataModule(L.LightningDataModule):
         num_workers: int = 0,
         pin_memory: bool = True,
         prefetch_factor: int = 2,
+        video_feature_groups: Optional[list[str]] = None,
         **kwargs,
     ):
         super().__init__()
@@ -236,6 +281,7 @@ class VAPDataModule(L.LightningDataModule):
         self.pin_memory = pin_memory
         self.num_workers = num_workers
         self.prefetch_factor = prefetch_factor
+        self.video_feature_groups = video_feature_groups or ["all"]
 
     def __repr__(self):
         s = self.__class__.__name__
@@ -250,6 +296,7 @@ class VAPDataModule(L.LightningDataModule):
         s += f"\n\tpin_memory: {self.pin_memory}"
         s += f"\n\tnum_workers: {self.num_workers}"
         s += f"\n\tprefetch_factor: {self.prefetch_factor}"
+        s += f"\n\tvideo_feature_groups: {self.video_feature_groups}"
         return s
 
     def prepare_data(self):
@@ -279,6 +326,7 @@ class VAPDataModule(L.LightningDataModule):
                 sample_rate=self.sample_rate,
                 frame_hz=self.frame_hz,
                 mono=self.mono,
+                video_feature_groups=self.video_feature_groups,
             )
             self.val_dset = VAPDataset(
                 self.val_path,
@@ -286,6 +334,7 @@ class VAPDataModule(L.LightningDataModule):
                 sample_rate=self.sample_rate,
                 frame_hz=self.frame_hz,
                 mono=self.mono,
+                video_feature_groups=self.video_feature_groups,
             )
 
         if stage in (None, "test"):
@@ -297,6 +346,7 @@ class VAPDataModule(L.LightningDataModule):
                 sample_rate=self.sample_rate,
                 frame_hz=self.frame_hz,
                 mono=self.mono,
+                video_feature_groups=self.video_feature_groups,
             )
 
     def collate_fn(self, batch: list[dict[str, Any]]):

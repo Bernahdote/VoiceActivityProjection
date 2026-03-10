@@ -1,5 +1,6 @@
 from argparse import ArgumentParser
 from pathlib import Path
+from sklearn.model_selection import train_test_split
 from vap.data.datamodule import load_df
 from vap.utils.utils import read_txt
 
@@ -38,6 +39,9 @@ if __name__ == "__main__":
 
     # Add session column
     df["session"] = df["audio_path_a"].apply(lambda x: Path(x).stem.rsplit("_", 1)[0]) # WB 
+    # Extract domain from seamless_interaction path layout:
+    # .../<domain>/<split>/<id1>/<id2>/<file>.wav
+    df["domain"] = df["audio_path_a"].apply(lambda x: Path(x).parts[-5])
 
 
     # If any file path were provided we simply extract those
@@ -51,15 +55,28 @@ if __name__ == "__main__":
         if args.test_file:
             process_file(args, "test")
     else:
-        train_size = int(N * args.train_size)
-        val_size = int(N * args.val_size)
-        test_size = N - train_size - val_size
+        if args.train_size <= 0 or args.val_size <= 0:
+            raise ValueError("train_size and val_size must be > 0.")
+        if args.train_size + args.val_size >= 1.0:
+            raise ValueError("train_size + val_size must be < 1.0.")
 
-        # Sample splits
-        train_df = df.sample(n=train_size, random_state=0)
-        df = df.drop(train_df.index)
-        val_df = df.sample(n=val_size, random_state=0)
-        test_df = df.drop(val_df.index)
+        # 1) Stratified split into train and remainder
+        train_df, rest_df = train_test_split(
+            df,
+            train_size=args.train_size,
+            random_state=0,
+            stratify=df["domain"],
+        )
+
+        # 2) Split remainder into val/test to match requested absolute val_size
+        rest_frac = 1.0 - args.train_size
+        val_frac_within_rest = args.val_size / rest_frac
+        val_df, test_df = train_test_split(
+            rest_df,
+            train_size=val_frac_within_rest,
+            random_state=0,
+            stratify=rest_df["domain"],
+        )
         # Save splits
         Path(args.output_dir).mkdir(parents=True, exist_ok=True)
         train_df.to_csv(f"{args.output_dir}/train.csv", index=False)
