@@ -7,6 +7,8 @@ from lightning import seed_everything
 from lightning.pytorch import Trainer
 from omegaconf import DictConfig, OmegaConf
 
+from vap.data.datamodule import VAPDataset
+
 log = logging.getLogger(__name__)
 
 
@@ -145,6 +147,27 @@ def _print_metrics_block(title: str, metrics: dict[str, Any]) -> None:
         print(f"{k}: {metrics[k]}")
 
 
+def _setup_eval_datamodule(datamodule: Any) -> None:
+    datamodule.prepare_data()
+
+    # Need val_dset for trainer.validate(); some datamodules require train_path in setup("fit").
+    try:
+        datamodule.setup("fit")
+    except AssertionError as e:
+        if "TRAIN path" not in str(e):
+            raise
+        datamodule.val_dset = VAPDataset(
+            datamodule.val_path,
+            horizon=datamodule.horizon,
+            sample_rate=datamodule.sample_rate,
+            frame_hz=datamodule.frame_hz,
+            mono=datamodule.mono,
+        )
+
+    # Need test_dset for trainer.test().
+    datamodule.setup("test")
+
+
 @hydra.main(version_base=None, config_path="vap/conf", config_name="eval_config")
 def main(cfg: DictConfig) -> None:
     seed = int(cfg.get("seed", 0))
@@ -158,9 +181,7 @@ def main(cfg: DictConfig) -> None:
     _attach_metrics_from_cfg(module, cfg)
 
     datamodule = instantiate(cfg.datamodule)
-    datamodule.prepare_data()
-    datamodule.setup("fit")
-    datamodule.setup("test")
+    _setup_eval_datamodule(datamodule)
     trainer = _build_eval_trainer(cfg)
 
     val_list = trainer.validate(
