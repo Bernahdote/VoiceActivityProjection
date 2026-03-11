@@ -95,7 +95,7 @@ def _evaluate_single_split(
     if split_kind == "test":
         cfg.datamodule.test_path = str(csv_path)
     elif split_kind == "val":
-        cfg.datamodule.val_path = str(csv_path)
+        cfg.datamodule.test_path = str(csv_path)
     else:
         raise ValueError("split_kind must be one of: test, val")
 
@@ -109,8 +109,8 @@ def _evaluate_single_split(
         loader = datamodule.test_dataloader()
         metric = getattr(module, "test_metric", None)
     else:
-        datamodule.setup("fit")
-        loader = datamodule.val_dataloader()
+        datamodule.setup("test")
+        loader = datamodule.test_dataloader()
         metric = getattr(module, "val_metric", None)
 
     total_examples = 0
