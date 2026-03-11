@@ -34,23 +34,12 @@ def _load_checkpoint(module: torch.nn.Module, checkpoint_path: Path) -> dict[str
 def _infer_checkpoint_video_dim(
     ckpt: dict[str, Any],
     module: torch.nn.Module,
-) -> int | None:
-    # 1) Best effort: read hyper-parameter from checkpoint metadata.
-    hp = ckpt.get("hyper_parameters", {})
-    if isinstance(hp, dict):
-        model_hp = hp.get("model")
-        # Sometimes this is serialized as a dict-like config.
-        if isinstance(model_hp, dict) and "video_dim" in model_hp:
-            try:
-                return int(model_hp["video_dim"])
-            except Exception:
-                pass
-
-    # 2) Fallback: infer from feature_projection input dimension in state_dict.
+) -> tuple[int | None, str]:
+    # 1) Prefer inferring from checkpoint weights.
     state_dict = ckpt["state_dict"] if "state_dict" in ckpt else ckpt
     encoder_dim = int(getattr(module.model.encoder, "dim", 0))
     if encoder_dim <= 0:
-        return None
+        return None, "unknown"
 
     in_dim = None
     for key, value in state_dict.items():
@@ -66,8 +55,18 @@ def _infer_checkpoint_video_dim(
                 break
 
     if in_dim is None:
-        return None
-    return max(0, in_dim - encoder_dim)
+        # 2) Fallback: read hyper-parameter from checkpoint metadata.
+        hp = ckpt.get("hyper_parameters", {})
+        if isinstance(hp, dict):
+            model_hp = hp.get("model")
+            if isinstance(model_hp, dict) and "video_dim" in model_hp:
+                try:
+                    return int(model_hp["video_dim"]), "metadata"
+                except Exception:
+                    pass
+        return None, "unknown"
+
+    return max(0, in_dim - encoder_dim), "weights"
 
 
 def _text_series(df: pd.DataFrame) -> pd.Series:
@@ -283,7 +282,7 @@ def main(cfg_eval: DictConfig) -> None:
     module.eval()
 
     model_video_dim = int(getattr(module.model, "video_dim", 0))
-    ckpt_video_dim = _infer_checkpoint_video_dim(ckpt, module)
+    ckpt_video_dim, ckpt_video_dim_source = _infer_checkpoint_video_dim(ckpt, module)
     auto_video_dim = model_video_dim if ckpt_video_dim is None else ckpt_video_dim
     use_visual = _resolve_use_visual(cfg_eval.runtime.use_visual, auto_video_dim)
     effective_visual = use_visual and model_video_dim > 0
@@ -295,6 +294,7 @@ def main(cfg_eval: DictConfig) -> None:
     print(f"device: {device}")
     print(f"model.video_dim: {model_video_dim}")
     print(f"checkpoint.video_dim (inferred): {ckpt_video_dim}")
+    print(f"checkpoint.video_dim source: {ckpt_video_dim_source}")
     print(f"use_visual (requested): {cfg_eval.runtime.use_visual}")
     print(f"use_visual (effective): {effective_visual}")
     if not use_visual and model_video_dim > 0:
