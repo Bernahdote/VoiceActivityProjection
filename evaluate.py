@@ -139,10 +139,12 @@ def _evaluate_single_split(
     split_name: str,
     use_visual: bool,
     model_video_dim: int,
+    batch_size: int,
+    num_workers: int,
 ) -> None:
     cfg.datamodule.test_path = str(csv_path)
-    cfg.datamodule.batch_size = int(cfg.runtime.batch_size)
-    cfg.datamodule.num_workers = int(cfg.runtime.num_workers)
+    cfg.datamodule.batch_size = int(batch_size)
+    cfg.datamodule.num_workers = int(num_workers)
 
     datamodule = instantiate(cfg.datamodule)
     datamodule.prepare_data()
@@ -263,6 +265,8 @@ def main(cfg_eval: DictConfig) -> None:
             split_name="full_test",
             use_visual=use_visual,
             model_video_dim=model_video_dim,
+            batch_size=int(cfg_eval.runtime.batch_size),
+            num_workers=int(cfg_eval.runtime.num_workers),
         )
 
     if bool(cfg_eval.runtime.split_test_by_domain):
@@ -280,6 +284,8 @@ def main(cfg_eval: DictConfig) -> None:
             "improvised",
             use_visual=use_visual,
             model_video_dim=model_video_dim,
+            batch_size=int(cfg_eval.runtime.batch_size),
+            num_workers=int(cfg_eval.runtime.num_workers),
         )
         _evaluate_single_split(
             module,
@@ -288,6 +294,8 @@ def main(cfg_eval: DictConfig) -> None:
             "naturalistic",
             use_visual=use_visual,
             model_video_dim=model_video_dim,
+            batch_size=int(cfg_eval.runtime.batch_size),
+            num_workers=int(cfg_eval.runtime.num_workers),
         )
 
 
