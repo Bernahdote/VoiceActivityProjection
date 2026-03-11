@@ -1,6 +1,7 @@
 runtime:
   checkpoint_path: ???
   test_csv_path: ???
+  val_csv_path: null
 
   batch_size: 20
   num_workers: 4
@@ -13,5 +14,4 @@ runtime:
 
   split_test_by_domain: true
   evaluate_full_test: true
-  improvised_keywords: [improvised, improv]
-  naturalistic_keywords: [naturalistic, natural]
+  evaluate_full_val: false

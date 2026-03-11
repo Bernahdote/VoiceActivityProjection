@@ -94,14 +94,12 @@ def _contains_any(s: pd.Series, keywords: tuple[str, ...]) -> pd.Series:
 
 def _split_test_csv(
     test_csv_path: Path,
-    improvised_keywords: tuple[str, ...],
-    naturalistic_keywords: tuple[str, ...],
 ) -> dict[str, Path]:
     df = pd.read_csv(test_csv_path)
     text = _text_series(df)
 
-    improvised_mask = _contains_any(text, improvised_keywords)
-    naturalistic_mask = _contains_any(text, naturalistic_keywords)
+    improvised_mask = _contains_any(text, ("improvised",))
+    naturalistic_mask = _contains_any(text, ("naturalistic",))
 
     improvised_df = df[improvised_mask].copy()
     naturalistic_df = df[naturalistic_mask].copy()
@@ -176,30 +174,42 @@ def _evaluate_single_split(
     cfg: DictConfig,
     csv_path: Path,
     split_name: str,
+    split_kind: str,
     use_visual: bool,
     model_video_dim: int,
     batch_size: int,
     num_workers: int,
 ) -> None:
-    cfg.datamodule.test_path = str(csv_path)
+    if split_kind == "test":
+        cfg.datamodule.test_path = str(csv_path)
+    elif split_kind == "val":
+        cfg.datamodule.val_path = str(csv_path)
+    else:
+        raise ValueError("split_kind must be one of: test, val")
+
     cfg.datamodule.batch_size = int(batch_size)
     cfg.datamodule.num_workers = int(num_workers)
 
     datamodule = instantiate(cfg.datamodule)
     datamodule.prepare_data()
-    datamodule.setup("test")
-    test_loader = datamodule.test_dataloader()
+    if split_kind == "test":
+        datamodule.setup("test")
+        loader = datamodule.test_dataloader()
+    else:
+        datamodule.setup("fit")
+        loader = datamodule.val_dataloader()
 
     total_examples = 0
     vap_loss_sum = 0.0
     va_loss_sum = 0.0
 
-    metric = getattr(module, "test_metric", None)
+    metric_name = "test_metric" if split_kind == "test" else "val_metric"
+    metric = getattr(module, metric_name, None)
     if metric is not None:
         metric.reset()
 
     with torch.inference_mode():
-        for batch in tqdm(test_loader, desc=f"Evaluating {split_name}"):
+        for batch in tqdm(loader, desc=f"Evaluating {split_name}"):
             batch = _to_device(batch, module.device)
             out = _model_forward(
                 module=module,
@@ -306,6 +316,7 @@ def main(cfg_eval: DictConfig) -> None:
             cfg,
             test_csv_path,
             split_name="full_test",
+            split_kind="test",
             use_visual=use_visual,
             model_video_dim=model_video_dim,
             batch_size=int(cfg_eval.runtime.batch_size),
@@ -313,18 +324,13 @@ def main(cfg_eval: DictConfig) -> None:
         )
 
     if bool(cfg_eval.runtime.split_test_by_domain):
-        improvised_keywords = tuple(cfg_eval.runtime.improvised_keywords)
-        naturalistic_keywords = tuple(cfg_eval.runtime.naturalistic_keywords)
-        split_paths = _split_test_csv(
-            test_csv_path=test_csv_path,
-            improvised_keywords=improvised_keywords,
-            naturalistic_keywords=naturalistic_keywords,
-        )
+        split_paths = _split_test_csv(test_csv_path=test_csv_path)
         _evaluate_single_split(
             module,
             cfg,
             split_paths["improvised"],
             "improvised",
+            split_kind="test",
             use_visual=use_visual,
             model_video_dim=model_video_dim,
             batch_size=int(cfg_eval.runtime.batch_size),
@@ -335,6 +341,28 @@ def main(cfg_eval: DictConfig) -> None:
             cfg,
             split_paths["naturalistic"],
             "naturalistic",
+            split_kind="test",
+            use_visual=use_visual,
+            model_video_dim=model_video_dim,
+            batch_size=int(cfg_eval.runtime.batch_size),
+            num_workers=int(cfg_eval.runtime.num_workers),
+        )
+
+    if bool(cfg_eval.runtime.evaluate_full_val):
+        val_csv_raw = cfg_eval.runtime.get("val_csv_path", None)
+        if val_csv_raw is None or str(val_csv_raw).strip() == "":
+            raise ValueError(
+                "runtime.evaluate_full_val=true requires runtime.val_csv_path=/path/to/val_sliding.csv"
+            )
+        val_csv_path = Path(to_absolute_path(str(val_csv_raw)))
+        if not val_csv_path.is_file():
+            raise FileNotFoundError(f"Validation CSV not found: {val_csv_path}")
+        _evaluate_single_split(
+            module,
+            cfg,
+            val_csv_path,
+            split_name="full_val",
+            split_kind="val",
             use_visual=use_visual,
             model_video_dim=model_video_dim,
             batch_size=int(cfg_eval.runtime.batch_size),
