@@ -1,0 +1,17 @@
+runtime:
+  checkpoint_path: ???
+  test_csv_path: ???
+
+  batch_size: 20
+  num_workers: 4
+  device: auto
+
+  # auto: use visuals iff model.video_dim > 0
+  # true: always feed visual features from batch
+  # false: disable visuals (zero features if visual model)
+  use_visual: auto
+
+  split_test_by_domain: true
+  evaluate_full_test: true
+  improvised_keywords: [improvised, improv]
+  naturalistic_keywords: [naturalistic, natural]

@@ -1,13 +1,14 @@
+import math
+import subprocess
+import tempfile
+from pathlib import Path
 
-import torch
-from vap.utils.audio import load_waveform
-from vap.model.vap_model import VAPModule
 import matplotlib.pyplot as plt
 import numpy as np
-import subprocess
-from pathlib import Path
-import tempfile
-import math
+import torch
+
+from vap.modules.lightning_module import VAPModule
+from vap.utils.audio import load_waveform
 
 ckpt = "/Users/willemberner/Desktop/Exjobb/epoch=7-step=14008.ckpt"
 audio_a = "/Users/willemberner/datasets/seamless_interaction/improvised/dev/0000/0038/V00_S2020_I00000686_P1275A.wav"
@@ -15,8 +16,7 @@ audio_b = "/Users/willemberner/datasets/seamless_interaction/improvised/dev/0000
 video_a = "/Users/willemberner/datasets/seamless_interaction/improvised/dev/0000/0038/V00_S2020_I00000686_P1275A.mp4"
 video_b = "/Users/willemberner/datasets/seamless_interaction/improvised/dev/0000/0032/V00_S2020_I00000686_P1276A.mp4"
 
-
-
+start_time = 0.0
 window_sec = 20.0
 fps = 40
 pixels_per_sec = 100
@@ -28,6 +28,7 @@ video_frame_q = "4"
 preview_seconds = 60.0
 top_k = 5
 topk_gap_rows = 1
+thr = 0.5
 
 
 def run_ffmpeg(args):
@@ -55,29 +56,48 @@ def build_topk_window_rgb(topk_states, gray_rgb, blue_rgb, orange_rgb, gap_rows)
     return window_rgb, row_offsets
 
 
-w1, _ = load_waveform(
-    audio_a, sample_rate=16000, mono=True, start_time=0, end_time=preview_seconds
-)
-w2, _ = load_waveform(
-    audio_b, sample_rate=16000, mono=True, start_time=0, end_time=preview_seconds
-)
+for p in [ckpt, audio_a, audio_b, video_a, video_b]:
+    if not Path(p).exists():
+        raise FileNotFoundError(f"Missing file: {p}")
 
-
-w = torch.cat([w1, w2], dim=0).unsqueeze(0)  # [1, 2, T]
-
-module = VAPModule.load_from_checkpoint(ckpt)
-model = module.model.eval()
+device = "cuda" if torch.cuda.is_available() else "cpu"
+module = VAPModule.load_from_checkpoint(ckpt, map_location=device)
+model = module.model.to(device).eval()
 if not hasattr(model, "video_dim"):
-    # Backward compatibility for checkpoints created before `video_dim` existed.
     model.video_dim = 0
 
-with torch.no_grad():
-    out = model.probs(w)
+sr = model.sample_rate
+frame_hz = model.frame_hz
 
-frame_hz = 50  # model frame rate
-sr = 16000
-thr = 0.5
-vad_thr = 0.5
+segment_start = start_time
+segment_end_req = segment_start + preview_seconds
+
+w1, _ = load_waveform(
+    audio_a,
+    sample_rate=sr,
+    mono=True,
+    start_time=segment_start,
+    end_time=segment_end_req,
+)
+w2, _ = load_waveform(
+    audio_b,
+    sample_rate=sr,
+    mono=True,
+    start_time=segment_start,
+    end_time=segment_end_req,
+)
+
+n_samples = min(w1.shape[-1], w2.shape[-1])
+if n_samples == 0:
+    raise RuntimeError("Loaded empty audio segment.")
+w1 = w1[..., :n_samples]
+w2 = w2[..., :n_samples]
+w = torch.cat([w1, w2], dim=0).unsqueeze(0)  # [1, 2, T]
+
+preview_sec = n_samples / sr
+
+with torch.no_grad():
+    out = model.probs(w.to(device))
 
 t_frame = torch.arange(out["p_now"].shape[1]) / frame_hz
 t_audio = torch.arange(w.shape[-1]) / sr
@@ -143,8 +163,6 @@ ax_wav_a_vad.set_ylim(-0.05, 1.05)
 ax_wav_b_vad.set_ylim(-0.05, 1.05)
 ax_wav_a_vad.set_ylabel("VAD prob", color="red")
 ax_wav_b_vad.set_ylabel("VAD prob", color="red")
-
-
 
 # p_now / p_future with threshold fill
 x = t_frame.cpu().numpy()
@@ -258,6 +276,8 @@ with tempfile.TemporaryDirectory(dir=temp_root) as tmpdir:
         [
             "ffmpeg",
             "-y",
+            "-ss",
+            str(segment_start),
             "-i",
             video_a,
             "-vf",
@@ -274,6 +294,8 @@ with tempfile.TemporaryDirectory(dir=temp_root) as tmpdir:
         [
             "ffmpeg",
             "-y",
+            "-ss",
+            str(segment_start),
             "-i",
             video_b,
             "-vf",
@@ -342,8 +364,16 @@ with tempfile.TemporaryDirectory(dir=temp_root) as tmpdir:
         [
             "ffmpeg",
             "-y",
+            "-ss",
+            str(segment_start),
+            "-t",
+            str(preview_sec),
             "-i",
             audio_a,
+            "-ss",
+            str(segment_start),
+            "-t",
+            str(preview_sec),
             "-i",
             audio_b,
             "-filter_complex",
@@ -352,8 +382,6 @@ with tempfile.TemporaryDirectory(dir=temp_root) as tmpdir:
             "aac",
             "-b:a",
             "192k",
-            "-t",
-            str(preview_sec),
             str(mixed_audio),
         ],
     )

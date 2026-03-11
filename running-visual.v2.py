@@ -11,13 +11,13 @@ import torch.nn.functional as F
 from vap.modules.lightning_module import VAPModule
 from vap.utils.audio import load_waveform
 
-ckpt = "/Users/willemberner/Desktop/Exjobb/VoiceActivityProjection/epoch=13-step=24514.ckpt"
-audio_a = "/Users/willemberner/datasets/seamless_interaction/improvised/dev/0000/0038/V00_S2020_I00000686_P1275A.wav"
-audio_b = "/Users/willemberner/datasets/seamless_interaction/improvised/dev/0000/0032/V00_S2020_I00000686_P1276A.wav"
-video_a = "/Users/willemberner/datasets/seamless_interaction/improvised/dev/0000/0038/V00_S2020_I00000686_P1275A.mp4"
-video_b = "/Users/willemberner/datasets/seamless_interaction/improvised/dev/0000/0032/V00_S2020_I00000686_P1276A.mp4"
-npz_a = "/Users/willemberner/datasets/seamless_interaction/improvised/dev/0000/0038/V00_S2020_I00000686_P1275A.f.npz"
-npz_b = "/Users/willemberner/datasets/seamless_interaction/improvised/dev/0000/0032/V00_S2020_I00000686_P1276A.f.npz"
+ckpt = "/Users/willemberner/Desktop/Exjobb/epoch=13-step=24514.ckpt"
+audio_a = "/Users/willemberner/datasets/seamless_interaction/improvised/dev/0000/0051/V00_S2025_I00001079_P1282A.wav"
+audio_b = "/Users/willemberner/datasets/seamless_interaction/improvised/dev/0000/0010/V00_S2025_I00001079_P1281A.wav"
+video_a = "/Users/willemberner/datasets/seamless_interaction/improvised/dev/0000/0051/V00_S2025_I00001079_P1282A.mp4"
+video_b = "/Users/willemberner/datasets/seamless_interaction/improvised/dev/0000/0010/V00_S2025_I00001079_P1281A.mp4"
+npz_a = "/Users/willemberner/datasets/seamless_interaction/improvised/dev/0000/0051/V00_S2025_I00001079_P1282A.f.npz"
+npz_b = "/Users/willemberner/datasets/seamless_interaction/improvised/dev/0000/0010/V00_S2025_I00001079_P1281A.f.npz"
 
 start_time = 0.0
 window_sec = 20.0
