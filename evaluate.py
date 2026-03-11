@@ -18,7 +18,7 @@ def _to_device(batch: dict[str, Any], device: torch.device) -> dict[str, Any]:
     return out
 
 
-def _load_checkpoint(module: torch.nn.Module, checkpoint_path: Path) -> None:
+def _load_checkpoint(module: torch.nn.Module, checkpoint_path: Path) -> dict[str, Any]:
     ckpt = torch.load(checkpoint_path, map_location="cpu")
     if not isinstance(ckpt, dict):
         raise ValueError(f"Unsupported checkpoint format in {checkpoint_path}")
@@ -28,6 +28,46 @@ def _load_checkpoint(module: torch.nn.Module, checkpoint_path: Path) -> None:
         print(f"[warn] Missing keys in checkpoint load: {len(missing)}")
     if unexpected:
         print(f"[warn] Unexpected keys in checkpoint load: {len(unexpected)}")
+    return ckpt
+
+
+def _infer_checkpoint_video_dim(
+    ckpt: dict[str, Any],
+    module: torch.nn.Module,
+) -> int | None:
+    # 1) Best effort: read hyper-parameter from checkpoint metadata.
+    hp = ckpt.get("hyper_parameters", {})
+    if isinstance(hp, dict):
+        model_hp = hp.get("model")
+        # Sometimes this is serialized as a dict-like config.
+        if isinstance(model_hp, dict) and "video_dim" in model_hp:
+            try:
+                return int(model_hp["video_dim"])
+            except Exception:
+                pass
+
+    # 2) Fallback: infer from feature_projection input dimension in state_dict.
+    state_dict = ckpt["state_dict"] if "state_dict" in ckpt else ckpt
+    encoder_dim = int(getattr(module.model.encoder, "dim", 0))
+    if encoder_dim <= 0:
+        return None
+
+    in_dim = None
+    for key, value in state_dict.items():
+        if str(key).endswith("feature_projection.0.weight") and torch.is_tensor(value):
+            # LayerNorm weight, shape: (in_dim,)
+            if value.ndim == 1:
+                in_dim = int(value.shape[0])
+                break
+        if str(key).endswith("feature_projection.weight") and torch.is_tensor(value):
+            # Linear weight, shape: (out_dim, in_dim)
+            if value.ndim == 2:
+                in_dim = int(value.shape[1])
+                break
+
+    if in_dim is None:
+        return None
+    return max(0, in_dim - encoder_dim)
 
 
 def _text_series(df: pd.DataFrame) -> pd.Series:
@@ -232,7 +272,7 @@ def main(cfg_eval: DictConfig) -> None:
     if getattr(module, "test_metric", None) is None and "val_metric" in cfg.module:
         module.test_metric = instantiate(cfg.module.val_metric)
 
-    _load_checkpoint(module, checkpoint_path)
+    ckpt = _load_checkpoint(module, checkpoint_path)
 
     device_opt = str(cfg_eval.runtime.device).lower()
     if device_opt == "auto":
@@ -243,7 +283,9 @@ def main(cfg_eval: DictConfig) -> None:
     module.eval()
 
     model_video_dim = int(getattr(module.model, "video_dim", 0))
-    use_visual = _resolve_use_visual(cfg_eval.runtime.use_visual, model_video_dim)
+    ckpt_video_dim = _infer_checkpoint_video_dim(ckpt, module)
+    auto_video_dim = model_video_dim if ckpt_video_dim is None else ckpt_video_dim
+    use_visual = _resolve_use_visual(cfg_eval.runtime.use_visual, auto_video_dim)
     effective_visual = use_visual and model_video_dim > 0
 
     print("\n=== Evaluation Setup ===")
@@ -252,6 +294,7 @@ def main(cfg_eval: DictConfig) -> None:
     print(f"test_csv: {test_csv_path}")
     print(f"device: {device}")
     print(f"model.video_dim: {model_video_dim}")
+    print(f"checkpoint.video_dim (inferred): {ckpt_video_dim}")
     print(f"use_visual (requested): {cfg_eval.runtime.use_visual}")
     print(f"use_visual (effective): {effective_visual}")
     if not use_visual and model_video_dim > 0:
