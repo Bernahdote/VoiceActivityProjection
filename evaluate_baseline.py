@@ -202,6 +202,21 @@ def main(cfg_eval: DictConfig) -> None:
     print(f"test_csv: {test_csv_path}")
     print(f"device: {device}")
 
+    val_csv_raw = cfg_eval.runtime.get("val_csv_path", None)
+    if val_csv_raw is not None and str(val_csv_raw).strip() != "":
+        val_csv_path = Path(to_absolute_path(str(val_csv_raw)))
+        if not val_csv_path.is_file():
+            raise FileNotFoundError(f"Validation CSV not found: {val_csv_path}")
+        _evaluate_single_split(
+            module=module,
+            cfg=cfg,
+            csv_path=val_csv_path,
+            split_name="full_val",
+            split_kind="val",
+            batch_size=int(cfg_eval.runtime.batch_size),
+            num_workers=int(cfg_eval.runtime.num_workers),
+        )
+
     _evaluate_single_split(
         module=module,
         cfg=cfg,
@@ -229,21 +244,6 @@ def main(cfg_eval: DictConfig) -> None:
             csv_path=split_paths["naturalistic"],
             split_name="naturalistic",
             split_kind="test",
-            batch_size=int(cfg_eval.runtime.batch_size),
-            num_workers=int(cfg_eval.runtime.num_workers),
-        )
-
-    val_csv_raw = cfg_eval.runtime.get("val_csv_path", None)
-    if val_csv_raw is not None and str(val_csv_raw).strip() != "":
-        val_csv_path = Path(to_absolute_path(str(val_csv_raw)))
-        if not val_csv_path.is_file():
-            raise FileNotFoundError(f"Validation CSV not found: {val_csv_path}")
-        _evaluate_single_split(
-            module=module,
-            cfg=cfg,
-            csv_path=val_csv_path,
-            split_name="full_val",
-            split_kind="val",
             batch_size=int(cfg_eval.runtime.batch_size),
             num_workers=int(cfg_eval.runtime.num_workers),
         )
