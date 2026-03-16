@@ -7,16 +7,17 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 
+from vap.data.datamodule import VAPDataset
+from vap.events.events import EventConfig
+from vap.metrics import VAPMetric
 from vap.modules.lightning_module import VAPModule
-from vap.utils.audio import load_waveform
 
-ckpt = "/Users/willemberner/Desktop/Exjobb/epoch=7-step=14008.ckpt"
-audio_a = "/Users/willemberner/datasets/seamless_interaction/improvised/dev/0000/0038/V00_S2020_I00000686_P1275A.wav"
-audio_b = "/Users/willemberner/datasets/seamless_interaction/improvised/dev/0000/0032/V00_S2020_I00000686_P1276A.wav"
-video_a = "/Users/willemberner/datasets/seamless_interaction/improvised/dev/0000/0038/V00_S2020_I00000686_P1275A.mp4"
-video_b = "/Users/willemberner/datasets/seamless_interaction/improvised/dev/0000/0032/V00_S2020_I00000686_P1276A.mp4"
+ckpt = "/Users/willemberner/Desktop/Exjobb/checkpoints/test2-visuals/epoch=9-step=32150.ckpt"
+use_val_dataset_sample = True
+# Use a row from the validation split so waveform/features/vad match training-time preprocessing.
+val_csv = "/Users/willemberner/datasets/splits/val_sliding.csv"
+val_row_idx = 0
 
-start_time = 0.0
 window_sec = 20.0
 fps = 40
 pixels_per_sec = 100
@@ -25,7 +26,7 @@ temp_root = Path("outputs") / "tmp_render"
 video_scale_width = 240
 video_frame_ext = "jpg"
 video_frame_q = "4"
-preview_seconds = 60.0
+preview_seconds = 30.0
 top_k = 5
 topk_gap_rows = 1
 thr = 0.5
@@ -56,12 +57,90 @@ def build_topk_window_rgb(topk_states, gray_rgb, blue_rgb, orange_rgb, gap_rows)
     return window_rgb, row_offsets
 
 
-for p in [ckpt, audio_a, audio_b, video_a, video_b]:
-    if not Path(p).exists():
-        raise FileNotFoundError(f"Missing file: {p}")
+def extract_event_decision_points(
+    p_now: torch.Tensor,
+    p_future: torch.Tensor,
+    events: dict[str, list[list[tuple[int, int, int]]]],
+    frame_hz_local: int,
+    threshold: float,
+) -> dict[str, list[dict[str, float | int | str | bool]]]:
+    if p_now.ndim != 2 or p_future.ndim != 2:
+        return {"hs": [], "sp": []}
+
+    def _collect(
+        event_key: str,
+        use_future: bool,
+        invert_hold: bool,
+        target: int,
+        marker: str,
+        label: str,
+    ) -> list[dict[str, float | int | str | bool]]:
+        out = []
+        event_batch0 = events.get(event_key, [[]])
+        if len(event_batch0) == 0:
+            return out
+        for start, end, speaker in event_batch0[0]:
+            start_i = int(start)
+            end_i = int(end)
+            if end_i <= start_i or start_i < 0:
+                continue
+            base = p_future if use_future else p_now
+            if start_i >= base.shape[1]:
+                continue
+            end_i = min(end_i, base.shape[1])
+            if end_i <= start_i:
+                continue
+
+            score = base[0, start_i:end_i]
+            if int(speaker) == 1:
+                score = 1.0 - score
+            if invert_hold:
+                score = 1.0 - score
+            score_mean = float(score.mean().cpu())
+            pred = int(score_mean >= threshold)
+            out.append(
+                {
+                    "time_sec": (start_i + end_i) / (2.0 * frame_hz_local),
+                    "score": score_mean,
+                    "correct": pred == target,
+                    "marker": marker,
+                    "target": target,
+                    "label": label,
+                }
+            )
+        return out
+
+    hs = []
+    hs += _collect("shift", use_future=False, invert_hold=False, target=1, marker="^", label="Shift")
+    hs += _collect("hold", use_future=False, invert_hold=True, target=0, marker="o", label="Hold")
+
+    sp = []
+    sp += _collect(
+        "pred_shift",
+        use_future=True,
+        invert_hold=False,
+        target=1,
+        marker="^",
+        label="Pre-shift",
+    )
+    sp += _collect(
+        "pred_shift_neg",
+        use_future=True,
+        invert_hold=True,
+        target=0,
+        marker="o",
+        label="Pre-hold",
+    )
+    return {"hs": hs, "sp": sp}
+
+
+if not Path(ckpt).exists():
+    raise FileNotFoundError(f"Missing file: {ckpt}")
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
-module = VAPModule.load_from_checkpoint(ckpt, map_location=device)
+# PyTorch >=2.6 defaults to weights_only=True; this checkpoint contains trusted
+# OmegaConf objects, so we explicitly disable weights-only loading.
+module = VAPModule.load_from_checkpoint(ckpt, map_location=device, weights_only=False)
 model = module.model.to(device).eval()
 if not hasattr(model, "video_dim"):
     model.video_dim = 0
@@ -71,42 +150,88 @@ frame_hz = model.frame_hz
 # Keep render fps aligned to model frame rate to avoid cursor/probability drift.
 fps = int(frame_hz)
 
-segment_start = start_time
-segment_end_req = segment_start + preview_seconds
+if not use_val_dataset_sample:
+    raise ValueError("Set use_val_dataset_sample=True to match training/validation pipeline.")
+if not Path(val_csv).exists():
+    raise FileNotFoundError(f"Missing validation csv: {val_csv}")
 
-w1, _ = load_waveform(
-    audio_a,
+dset = VAPDataset(
+    path=val_csv,
+    horizon=2,
     sample_rate=sr,
-    mono=True,
-    start_time=segment_start,
-    end_time=segment_end_req,
+    frame_hz=frame_hz,
+    mono=False,
+    video_feature_groups=["all"],
 )
-w2, _ = load_waveform(
-    audio_b,
-    sample_rate=sr,
-    mono=True,
-    start_time=segment_start,
-    end_time=segment_end_req,
-)
+if val_row_idx < 0 or val_row_idx >= len(dset):
+    raise IndexError(f"val_row_idx {val_row_idx} out of range for {len(dset)} samples")
 
-n_samples = min(w1.shape[-1], w2.shape[-1])
-if n_samples == 0:
-    raise RuntimeError("Loaded empty audio segment.")
-w1 = w1[..., :n_samples]
-w2 = w2[..., :n_samples]
-w = torch.cat([w1, w2], dim=0).unsqueeze(0)  # [1, 2, T]
+row = dset.df.iloc[val_row_idx]
+sample = dset[val_row_idx]
 
-preview_sec = n_samples / sr
+audio_a = str(row["audio_path_a"])
+audio_b = str(row["audio_path_b"])
+video_a = str(Path(audio_a).with_suffix(".mp4"))
+video_b = str(Path(audio_b).with_suffix(".mp4"))
+for p in [audio_a, audio_b, video_a, video_b]:
+    if not Path(p).exists():
+        raise FileNotFoundError(f"Missing file: {p}")
+
+segment_start = float(row["start"])
+segment_end = float(row["end"])
+w = sample["waveform"].unsqueeze(0)  # [1, 2, T]
+feat_a = sample["video_features_a"]
+feat_b = sample["video_features_b"]
+vad_events = sample["vad"].unsqueeze(0)
+preview_sec = float(w.shape[-1]) / float(sr)
+preview_seconds = preview_sec
 
 with torch.no_grad():
-    out = model.probs(w.to(device))
+    raw_out = model(
+        w.to(device),
+        video_features_a=feat_a.unsqueeze(0).to(device),
+        video_features_b=feat_b.unsqueeze(0).to(device),
+    )
+    probs_train = model.objective.get_probs(raw_out["logits"])
+
+out = {
+    "probs": probs_train["probs"],
+    "p_now": probs_train["p_now"],
+    "p_future": probs_train["p_future"],
+    "vad": raw_out["vad"].sigmoid(),
+}
 
 t_frame = torch.arange(out["p_now"].shape[1]) / frame_hz
 t_audio = torch.arange(w.shape[-1]) / sr
 
 y1 = out["p_now"][0].cpu().numpy()
 y2 = out["p_future"][0].cpu().numpy()
+y1_b = 1.0 - y1
+y2_b = 1.0 - y2
 vad = out["vad"][0].cpu().numpy()
+
+val_metric = getattr(module, "val_metric", None)
+if val_metric is None:
+    val_metric = VAPMetric(
+        event_config=EventConfig(
+            frame_hz=frame_hz,
+            max_time=int(round(float(w.shape[-1]) / float(sr))),
+            equal_hold_shift=True,
+        ),
+        threshold=thr,
+    )
+metric_threshold = float(getattr(val_metric, "threshold", thr))
+events = val_metric.event_extractor(vad_events)
+decision_points = extract_event_decision_points(
+    p_now=out["p_now"].detach().cpu(),
+    p_future=out["p_future"].detach().cpu(),
+    events=events,
+    frame_hz_local=frame_hz,
+    threshold=metric_threshold,
+)
+hs_decisions = decision_points["hs"]
+sp_decisions = decision_points["sp"]
+
 probs = out["probs"][0]
 pred_class = probs.argmax(dim=-1)
 pred_bins = model.objective.codebook.decode(pred_class).cpu().numpy()  # [T, 2, n_bins]
@@ -137,8 +262,11 @@ ax_topk_windows = fig.add_subplot(gs_bottom[0, 1])
 
 ax_wav_a.set_title("Waveform A")
 ax_wav_b.set_title("Waveform B")
-ax_pnow.set_title("p_now")
-ax_pfut.set_title("p_future")
+bin_times = list(getattr(model.objective, "bin_times", [0.2, 0.4, 0.6, 0.8]))
+now_end = float(sum(bin_times[:2]))
+future_end = float(sum(bin_times))
+ax_pnow.set_title(f"p_now: P(next speaker) in 0-{now_end:.1f}s + HS decision points")
+ax_pfut.set_title(f"p_future: P(next speaker) in {now_end:.1f}-{future_end:.1f}s")
 ax_vid_a.set_title("Video A")
 ax_vid_b.set_title("Video B")
 
@@ -168,12 +296,135 @@ ax_wav_b_vad.set_ylabel("VAD prob", color="red")
 
 # p_now / p_future with threshold fill
 x = t_frame.cpu().numpy()
-for ax, y, title in [(ax_pnow, y1, "p_now (A)"), (ax_pfut, y2, "p_future (A)")]:
-    ax.plot(x, y, color="black", lw=1)
+for ax, y_a, y_b in [(ax_pnow, y1, y1_b), (ax_pfut, y2, y2_b)]:
+    # Show probabilities as frame-wise values (no visual interpolation between frames).
+    ax.step(x, y_a, where="post", color=color_a, lw=1.4, label="P(next=A)")
+    ax.step(
+        x,
+        y_b,
+        where="post",
+        color=color_b,
+        lw=1.2,
+        alpha=0.9,
+        label="P(next=B)=1-P(next=A)",
+    )
     ax.axhline(thr, color="k", ls="--", lw=1)
-    ax.fill_between(x, y, thr, where=(y >= thr), color=color_a, alpha=0.3, interpolate=True)
-    ax.fill_between(x, y, thr, where=(y < thr), color=color_b, alpha=0.3, interpolate=True)
+    ax.fill_between(
+        x,
+        y_a,
+        thr,
+        where=(y_a >= thr),
+        color=color_a,
+        alpha=0.18,
+        step="post",
+    )
+    ax.fill_between(
+        x,
+        y_a,
+        thr,
+        where=(y_a < thr),
+        color=color_b,
+        alpha=0.18,
+        step="post",
+    )
     ax.set_ylim(-0.05, 1.05)
+    ax.legend(loc="upper right", fontsize=8, framealpha=0.7)
+
+# Hold/Shift event-level decision points on p_now (training-val metric definition).
+if len(hs_decisions) > 0:
+    shift_x = [d["time_sec"] for d in hs_decisions if d["target"] == 1]
+    shift_y = [d["score"] for d in hs_decisions if d["target"] == 1]
+    shift_c = ["#2ca02c" if d["correct"] else "#d62728" for d in hs_decisions if d["target"] == 1]
+    hold_x = [d["time_sec"] for d in hs_decisions if d["target"] == 0]
+    hold_y = [d["score"] for d in hs_decisions if d["target"] == 0]
+    hold_c = ["#2ca02c" if d["correct"] else "#d62728" for d in hs_decisions if d["target"] == 0]
+
+    if len(shift_x) > 0:
+        ax_pnow.scatter(
+            shift_x,
+            shift_y,
+            c=shift_c,
+            marker="^",
+            s=42,
+            edgecolors="black",
+            linewidths=0.5,
+            zorder=6,
+            label="HS shift decision",
+        )
+    if len(hold_x) > 0:
+        ax_pnow.scatter(
+            hold_x,
+            hold_y,
+            c=hold_c,
+            marker="o",
+            s=34,
+            edgecolors="black",
+            linewidths=0.5,
+            zorder=6,
+            label="HS hold decision",
+        )
+
+    n_total = len(hs_decisions)
+    n_correct = sum(int(d["correct"]) for d in hs_decisions)
+    hs_acc = n_correct / n_total if n_total > 0 else 0.0
+    ax_pnow.text(
+        0.01,
+        0.98,
+        f"HS decisions: {n_correct}/{n_total} ({hs_acc:.1%}) | green correct, red wrong",
+        transform=ax_pnow.transAxes,
+        ha="left",
+        va="top",
+        fontsize=9,
+        bbox={"facecolor": "white", "alpha": 0.7, "edgecolor": "none"},
+    )
+
+# Shift-prediction event-level decision points on p_future (training-val metric definition).
+if len(sp_decisions) > 0:
+    pos_x = [d["time_sec"] for d in sp_decisions if d["target"] == 1]
+    pos_y = [d["score"] for d in sp_decisions if d["target"] == 1]
+    pos_c = ["#2ca02c" if d["correct"] else "#d62728" for d in sp_decisions if d["target"] == 1]
+    neg_x = [d["time_sec"] for d in sp_decisions if d["target"] == 0]
+    neg_y = [d["score"] for d in sp_decisions if d["target"] == 0]
+    neg_c = ["#2ca02c" if d["correct"] else "#d62728" for d in sp_decisions if d["target"] == 0]
+
+    if len(pos_x) > 0:
+        ax_pfut.scatter(
+            pos_x,
+            pos_y,
+            c=pos_c,
+            marker="^",
+            s=42,
+            edgecolors="black",
+            linewidths=0.5,
+            zorder=6,
+            label="SP pre-shift decision",
+        )
+    if len(neg_x) > 0:
+        ax_pfut.scatter(
+            neg_x,
+            neg_y,
+            c=neg_c,
+            marker="o",
+            s=34,
+            edgecolors="black",
+            linewidths=0.5,
+            zorder=6,
+            label="SP pre-hold decision",
+        )
+
+    n_total = len(sp_decisions)
+    n_correct = sum(int(d["correct"]) for d in sp_decisions)
+    sp_acc = n_correct / n_total if n_total > 0 else 0.0
+    ax_pfut.text(
+        0.01,
+        0.98,
+        f"SP decisions: {n_correct}/{n_total} ({sp_acc:.1%}) | green correct, red wrong",
+        transform=ax_pfut.transAxes,
+        ha="left",
+        va="top",
+        fontsize=9,
+        bbox={"facecolor": "white", "alpha": 0.7, "edgecolor": "none"},
+    )
 
 ax_pfut.set_xlabel("Time (s)")
 
