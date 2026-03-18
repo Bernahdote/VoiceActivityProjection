@@ -11,13 +11,14 @@ import torch
 
 from vap.data.create_sliding_window_dset import sliding_window
 from vap.data.datamodule import VAPDataModule
-from vap.events.events import EventConfig, TurnTakingEvents, get_dialog_states
-from vap.model.vap_model import VAPModule
+from vap.events.events import EventConfig
+from vap.modules.lightning_module import VAPModule
 from vap.utils.audio import load_waveform
+from vap.metrics import VAPMetric
 
 CKPT = "/Users/willemberner/Desktop/Exjobb/checkpoints/test2-visuals/epoch=9-step=32150.ckpt"
-AUDIO_A = "/Users/willemberner/datasets/seamless_interaction/improvised/dev/0000/0010/V00_S2025_I00001079_P1281A.wav"
-AUDIO_B = "/Users/willemberner/datasets/seamless_interaction/improvised/dev/0000/0051/V00_S2025_I00001079_P1282A.wav"
+AUDIO_A = "/Users/willemberner/datasets/seamless_interaction/improvised/dev/0000/0038/V00_S2020_I00000686_P1275A.wav"
+AUDIO_B = "/Users/willemberner/datasets/seamless_interaction/improvised/dev/0000/0032/V00_S2020_I00000686_P1276A.wav"
 
 WINDOW_DURATION = 20.0
 WINDOW_OVERLAP = 5.0
@@ -32,7 +33,7 @@ temp_root = Path("outputs") / "tmp_render"
 video_scale_width = 240
 video_frame_ext = "jpg"
 video_frame_q = "4"
-preview_seconds = 60.0
+preview_seconds = 30.0
 top_k = 5
 topk_gap_rows = 1
 
@@ -94,6 +95,87 @@ def build_sample_csv(tmp_dir: Path) -> tuple[Path, pd.DataFrame]:
     return out_path, df
 
 
+def collect_event_decisions(
+    events: dict[str, list[list[tuple[int, int, int]]]],
+    p_now: torch.Tensor,
+    p_future: torch.Tensor,
+    frame_hz_local: int,
+    window_start: float,
+    display_frame_start: int,
+    threshold: float,
+    segment_start: float,
+) -> tuple[dict[str, list[dict[str, float | int | str | bool]]], dict[str, int]]:
+    """
+    Mirror the validation plotting: gather HS and SP event-level decisions.
+    Times are shifted so 0 corresponds to the earliest window start (segment_start).
+    Overlapping frames before display_frame_start are skipped to avoid double-counting.
+    """
+    decisions = {"hs": [], "sp": []}
+    stats = {"hs_total": 0, "hs_correct": 0, "sp_total": 0, "sp_correct": 0}
+
+    if p_now.ndim != 2 or p_future.ndim != 2:
+        return decisions, stats
+
+    def _collect(event_key: str, use_future: bool, invert_hold: bool, target: int, marker: str, label: str):
+        base = p_future if use_future else p_now
+        event_batches = events.get(event_key) or []
+        if len(event_batches) == 0:
+            return []
+        out_list = []
+        for start, end, speaker in event_batches[0]:
+            start_i = int(start)
+            end_i = int(end)
+            if end_i <= start_i or start_i < 0:
+                continue
+            if start_i >= base.shape[1]:
+                continue
+            end_i = min(end_i, base.shape[1])
+            if end_i <= start_i:
+                continue
+
+            # Drop the overlapping prefix so we only plot each frame once.
+            disp_start = max(start_i, display_frame_start)
+            disp_end = min(end_i, base.shape[1])
+            if disp_end <= disp_start:
+                continue
+
+            score = base[0, disp_start:disp_end]
+            if int(speaker) == 1:
+                score = 1.0 - score
+            if invert_hold:
+                score = 1.0 - score
+
+            score_mean = float(score.mean().cpu())
+            pred = int(score_mean >= threshold)
+            center_frame = (disp_start + disp_end) / 2.0
+            time_rel = (window_start - segment_start) + center_frame / frame_hz_local
+
+            is_hs = event_key in ("shift", "hold")
+            stats_key = "hs" if is_hs else "sp"
+            stats[f"{stats_key}_total"] += 1
+            stats[f"{stats_key}_correct"] += int(pred == target)
+
+            out_list.append(
+                {
+                    "time_sec": time_rel,
+                    "score": score_mean,
+                    "correct": pred == target,
+                    "marker": marker,
+                    "target": target,
+                    "label": label,
+                }
+            )
+        return out_list
+
+    decisions["hs"] += _collect("shift", use_future=False, invert_hold=False, target=1, marker="^", label="Shift")
+    decisions["hs"] += _collect("hold", use_future=False, invert_hold=True, target=0, marker="o", label="Hold")
+
+    decisions["sp"] += _collect("pred_shift", use_future=True, invert_hold=False, target=1, marker="^", label="Pre-shift")
+    decisions["sp"] += _collect("pred_shift_neg", use_future=True, invert_hold=True, target=0, marker="o", label="Pre-hold")
+
+    return decisions, stats
+
+
 def inference() -> dict[str, object]:
     with tempfile.TemporaryDirectory() as tmpdir:
         csv_path, df = build_sample_csv(Path(tmpdir))
@@ -114,12 +196,24 @@ def inference() -> dict[str, object]:
     module = VAPModule.load_from_checkpoint(checkpoint_path=CKPT, map_location=device, weights_only=False)
     model = module.model.to(device).eval()
 
+    metric = VAPMetric(EventConfig(), threshold=0.5)
+    hs_decisions: list[dict[str, float | int | str | bool]] = []
+    sp_decisions: list[dict[str, float | int | str | bool]] = []
+    decision_stats_total: dict[str, int] = {
+        "hs_total": 0,
+        "hs_correct": 0,
+        "sp_total": 0,
+        "sp_correct": 0,
+    }
+
     aggregated: dict[str, torch.Tensor] = {}
     step_frames = int(round((WINDOW_DURATION - WINDOW_OVERLAP) * model.frame_hz))
     step_frames = max(1, step_frames)
+    test_df = dm.test_dset.df.reset_index(drop=True)
+    segment_start = float(test_df["start"].min())
 
     with torch.no_grad():
-        for batch in dm.test_dataloader():
+        for idx, batch in enumerate(dm.test_dataloader()):
             waveform = batch["waveform"].to(device)
             video_a = batch["video_features_a"].to(device)
             video_b = batch["video_features_b"].to(device)
@@ -128,6 +222,28 @@ def inference() -> dict[str, object]:
                 video_features_a=video_a,
                 video_features_b=video_b,
             )
+            events = metric.event_extractor(batch["vad"])
+            preds, targets = metric.extract_prediction_and_targets(
+                p_now=out["p_now"], p_fut=out["p_future"], events=events
+            )
+            metric._update_metrics(preds, targets)
+            window_len = out["p_now"].shape[1]
+            display_frame_start = 0 if idx == 0 else max(0, window_len - step_frames)
+            sample_start = float(test_df.iloc[idx]["start"])
+            batch_decisions, batch_stats = collect_event_decisions(
+                events=events,
+                p_now=out["p_now"],
+                p_future=out["p_future"],
+                frame_hz_local=model.frame_hz,
+                window_start=sample_start,
+                display_frame_start=display_frame_start,
+                threshold=THRESHOLD,
+                segment_start=segment_start,
+            )
+            hs_decisions.extend(batch_decisions["hs"])
+            sp_decisions.extend(batch_decisions["sp"])
+            for key in decision_stats_total:
+                decision_stats_total[key] += batch_stats.get(key, 0)
             if not aggregated:
                 aggregated = {k: v.clone() for k, v in out.items()}
             else:
@@ -138,106 +254,19 @@ def inference() -> dict[str, object]:
                         [aggregated[key], out[key][:, -step_frames:]], dim=1
                     )
 
+    scores = metric.compute()
+
     return {
         "out": aggregated,
         "model": model,
         "samples_df": df,
         "frame_hz": model.frame_hz,
+        "metrics": scores,
+        "hs_decisions": hs_decisions,
+        "sp_decisions": sp_decisions,
+        "decision_stats": decision_stats_total,
+        "segment_start": segment_start,
     }
-
-
-def extract_hs_decision_points(
-    p_now: torch.Tensor,
-    vad_for_events: torch.Tensor,
-    frame_hz_local: int,
-    threshold: float,
-) -> list[dict[str, float | int | str | bool]]:
-    if p_now.ndim != 2 or vad_for_events.ndim != 3:
-        return []
-
-    max_time = p_now.shape[1] / frame_hz_local
-    conf = EventConfig(
-        frame_hz=frame_hz_local,
-        max_time=max_time,
-        equal_hold_shift=False,
-    )
-    hs = TurnTakingEvents(conf=conf).HS(
-        vad_for_events, ds=get_dialog_states(vad_for_events), max_time=max_time
-    )
-
-    decisions = []
-    for event_type in ("shift", "hold"):
-        marker = "^" if event_type == "shift" else "o"
-        target = 1 if event_type == "shift" else 0
-        events_batch0 = hs.get(event_type, [[]])
-        if len(events_batch0) == 0:
-            continue
-
-        for start, end, speaker in events_batch0[0]:
-            start_i = int(start)
-            end_i = int(end)
-            if end_i <= start_i or start_i < 0 or start_i >= p_now.shape[1]:
-                continue
-            end_i = min(end_i, p_now.shape[1])
-            if end_i <= start_i:
-                continue
-
-            score = p_now[0, start_i:end_i]
-            if int(speaker) == 1:
-                score = 1.0 - score
-            if event_type == "hold":
-                score = 1.0 - score
-            score_mean = float(score.mean().cpu())
-            pred = int(score_mean >= threshold)
-            decisions.append(
-                {
-                    "time_sec": (start_i + end_i) / (2.0 * frame_hz_local),
-                    "score": score_mean,
-                    "correct": pred == target,
-                    "marker": marker,
-                    "target": target,
-                }
-            )
-    return decisions
-
-
-def load_gt_vad_from_json(
-    json_path_a: str,
-    json_path_b: str,
-    segment_start_sec: float,
-    segment_end_sec: float,
-    frame_hz_local: int,
-    target_frames: int,
-) -> torch.Tensor:
-    def _read_spans(path: str) -> list[tuple[float, float]]:
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        spans = []
-        for seg in data.get("metadata:vad", []):
-            s = seg.get("start", None)
-            e = seg.get("end", None)
-            if s is None or e is None:
-                continue
-            spans.append((float(s), float(e)))
-        return spans
-
-    vad = torch.zeros((1, target_frames, 2), dtype=torch.float32)
-    dur_sec = max(0.0, segment_end_sec - segment_start_sec)
-
-    for ch, path in enumerate((json_path_a, json_path_b)):
-        spans = _read_spans(path)
-        for s_abs, e_abs in spans:
-            s_rel = max(0.0, s_abs - segment_start_sec)
-            e_rel = min(dur_sec, e_abs - segment_start_sec)
-            if e_rel <= 0.0 or s_rel >= dur_sec or e_rel <= s_rel:
-                continue
-            s_idx = int(np.floor(s_rel * frame_hz_local))
-            e_idx = int(np.ceil(e_rel * frame_hz_local))
-            s_idx = max(0, min(s_idx, target_frames))
-            e_idx = max(0, min(e_idx, target_frames))
-            if e_idx > s_idx:
-                vad[0, s_idx:e_idx, ch] = 1.0
-    return vad
 
 
 if __name__ == "__main__":
@@ -246,15 +275,24 @@ if __name__ == "__main__":
     model = result["model"]
     frame_hz = result["frame_hz"]
     samples_df = result["samples_df"]
+    metrics = result.get("metrics")
+    hs_metrics = metrics.get("hs") if metrics else None
+    if hs_metrics and hs_metrics.get("acc") is not None:
+        acc_vals = hs_metrics["acc"].tolist()
+        hold_acc_v = acc_vals[0]
+        shift_acc_v = acc_vals[1]
+        bacc_v = (hold_acc_v + shift_acc_v) / 2.0
+        print("VAPMetric hold/shift:")
+        print(f"  Hold accuracy: {hold_acc_v:.4f}")
+        print(f"  Shift accuracy: {shift_acc_v:.4f}")
+        print(f"  Balanced accuracy: {bacc_v:.4f}")
 
     audio_a = AUDIO_A
     audio_b = AUDIO_B
     video_a = str(Path(audio_a).with_suffix(".mp4"))
     video_b = str(Path(audio_b).with_suffix(".mp4"))
-    json_a = str(Path(audio_a).with_suffix(".json"))
-    json_b = str(Path(audio_b).with_suffix(".json"))
 
-    for p in (CKPT, audio_a, audio_b, video_a, video_b, json_a, json_b):
+    for p in (CKPT, audio_a, audio_b, video_a, video_b):
         if not Path(p).exists():
             raise FileNotFoundError(f"Missing file: {p}")
 
@@ -288,20 +326,9 @@ if __name__ == "__main__":
     y1 = out["p_now"][0].cpu().numpy()
     y2 = out["p_future"][0].cpu().numpy()
     vad = out["vad"][0].cpu().numpy()
-    vad_events = load_gt_vad_from_json(
-        json_path_a=json_a,
-        json_path_b=json_b,
-        segment_start_sec=segment_start,
-        segment_end_sec=segment_end,
-        frame_hz_local=frame_hz,
-        target_frames=out["p_now"].shape[1],
-    )
-    h_s_decisions = extract_hs_decision_points(
-        p_now=out["p_now"].detach().cpu(),
-        vad_for_events=vad_events,
-        frame_hz_local=frame_hz,
-        threshold=THRESHOLD,
-    )
+    hs_decisions = result["hs_decisions"]
+    sp_decisions = result["sp_decisions"]
+    decision_stats = result.get("decision_stats", {})
     probs = out["probs"][0]
     pred_class = probs.argmax(dim=-1)
     pred_bins = model.objective.codebook.decode(pred_class).cpu().numpy()  # [T, 2, n_bins]
@@ -332,6 +359,7 @@ if __name__ == "__main__":
 
     ax_wav_a.set_title("Waveform A")
     ax_wav_b.set_title("Waveform B")
+    bin_times = list(getattr(model.objective, "bin_times", [0.2, 0.4, 0.6, 0.8]))
     ax_pnow.set_title("p_now + HS decision points")
     ax_pfut.set_title("p_future")
     ax_vid_a.set_title("Video A")
@@ -359,20 +387,37 @@ if __name__ == "__main__":
     ax_wav_b_vad.set_ylabel("VAD prob", color="red")
 
     x = t_frame.cpu().numpy()
-    for ax, y, title in [(ax_pnow, y1, "p_now (A)"), (ax_pfut, y2, "p_future (A)")]:
-        ax.plot(x, y, color="black", lw=1)
+    for ax, y in [(ax_pnow, y1), (ax_pfut, y2)]:
+        ax.step(x, y, where="post", color=color_a, lw=1.4) 
         ax.axhline(THRESHOLD, color="k", ls="--", lw=1)
-        ax.fill_between(x, y, THRESHOLD, where=(y >= THRESHOLD), color=color_a, alpha=0.3, interpolate=True)
-        ax.fill_between(x, y, THRESHOLD, where=(y < THRESHOLD), color=color_b, alpha=0.3, interpolate=True)
+        ax.fill_between(
+            x,
+            y,
+            THRESHOLD,
+            where=(y >= THRESHOLD),
+            color=color_a,
+            alpha=0.18,
+            step="post",
+        )
+        ax.fill_between(
+            x,
+            y,
+            THRESHOLD,
+            where=(y < THRESHOLD),
+            color=color_b,
+            alpha=0.18,
+            step="post",
+        )
         ax.set_ylim(-0.05, 1.05)
+        ax.legend(loc="upper right", fontsize=8, framealpha=0.7)
 
-    if len(h_s_decisions) > 0:
-        shift_x = [d["time_sec"] for d in h_s_decisions if d["target"] == 1]
-        shift_y = [d["score"] for d in h_s_decisions if d["target"] == 1]
-        shift_c = ["#2ca02c" if d["correct"] else "#d62728" for d in h_s_decisions if d["target"] == 1]
-        hold_x = [d["time_sec"] for d in h_s_decisions if d["target"] == 0]
-        hold_y = [d["score"] for d in h_s_decisions if d["target"] == 0]
-        hold_c = ["#2ca02c" if d["correct"] else "#d62728" for d in h_s_decisions if d["target"] == 0]
+    if len(hs_decisions) > 0:
+        shift_x = [d["time_sec"] for d in hs_decisions if d["target"] == 1]
+        shift_y = [d["score"] for d in hs_decisions if d["target"] == 1]
+        shift_c = ["#2ca02c" if d["correct"] else "#d62728" for d in hs_decisions if d["target"] == 1]
+        hold_x = [d["time_sec"] for d in hs_decisions if d["target"] == 0]
+        hold_y = [d["score"] for d in hs_decisions if d["target"] == 0]
+        hold_c = ["#2ca02c" if d["correct"] else "#d62728" for d in hs_decisions if d["target"] == 0]
 
         if len(shift_x) > 0:
             ax_pnow.scatter(
@@ -384,7 +429,7 @@ if __name__ == "__main__":
                 edgecolors="black",
                 linewidths=0.5,
                 zorder=6,
-                label="Shift decision",
+                label="HS shift decision",
             )
         if len(hold_x) > 0:
             ax_pnow.scatter(
@@ -396,22 +441,16 @@ if __name__ == "__main__":
                 edgecolors="black",
                 linewidths=0.5,
                 zorder=6,
-                label="Hold decision",
+                label="HS hold decision",
             )
 
-        n_total = len(h_s_decisions)
-        n_correct = sum(int(d["correct"]) for d in h_s_decisions)
-        hs_acc = n_correct / n_total if n_total > 0 else 0.0
-        ax_pnow.text(
-            0.01,
-            0.98,
-            f"HS decisions: {n_correct}/{n_total} ({hs_acc:.1%})",
-            transform=ax_pnow.transAxes,
-            ha="left",
-            va="top",
-            fontsize=9,
-            bbox={"facecolor": "white", "alpha": 0.7, "edgecolor": "none"},
+        hs_total = decision_stats.get("hs_total", len(hs_decisions))
+        hs_correct = decision_stats.get(
+            "hs_correct", sum(int(d.get("correct", False)) for d in hs_decisions)
         )
+        hs_acc = hs_correct / hs_total if hs_total > 0 else 0.0
+
+    # SP decision plotting removed per request
 
     ax_pfut.set_xlabel("Time (s)")
 

@@ -2,8 +2,13 @@ einops
 hydra-core
 numpy
 omegaconf
-lightning
 wandb
 pytest
 pandas
 matplotlib
+x-transformers
+lightning
+torch
+torchaudio
+torchcodec
+soundfile

@@ -168,3 +168,5 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+# Local virtual environments
+venv*/

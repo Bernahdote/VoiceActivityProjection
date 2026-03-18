@@ -1,4 +1,5 @@
 import torch
+import soundfile as sf
 import torchaudio
 import torchaudio.functional as AF
 import torchaudio.transforms as AT
@@ -25,15 +26,15 @@ def sample_to_time(n_samples: int, sample_rate: int) -> float:
 
 
 def get_audio_info(audio_path: str) -> Dict[str, Any]:
-    info = torchaudio.info(audio_path)
+    info = sf.info(audio_path)
     return {
         "name": audio_path,
-        "duration": sample_to_time(info.num_frames, info.sample_rate),
-        "sample_rate": info.sample_rate,
-        "num_frames": info.num_frames,
-        "bits_per_sample": info.bits_per_sample,
-        "num_channels": info.num_channels,
-        "encoding": info.encoding,
+        "duration": sample_to_time(info.frames, info.samplerate),
+        "sample_rate": info.samplerate,
+        "num_frames": info.frames,
+        "bits_per_sample": info.subtype_info,
+        "num_channels": info.channels,
+        "encoding": info.subtype,
     }
 
 
