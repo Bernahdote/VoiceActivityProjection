@@ -7,7 +7,6 @@ datamodule:
   sample_rate: 16000
   frame_hz: 50
   mono: false
-  video_feature_groups: [all]
   batch_size: 8
   num_workers: 4
   pin_memory: true
@@ -19,7 +18,6 @@ module:
     _target_: vap.modules.VAP.VAP
     bin_times: [0.2, 0.4, 0.6, 0.8]
     frame_hz: 50
-    video_dim: 290 # Might need to change WB 
     encoder:
       _target_: vap.modules.encoder.EncoderCPC
       load_pretrained: true 
