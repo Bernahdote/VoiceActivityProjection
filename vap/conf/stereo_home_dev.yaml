@@ -97,7 +97,7 @@ trainer:
   - _target_: lightning.pytorch.callbacks.EarlyStopping
     monitor: val_loss
     mode: min
-    patience: 30 # Might need to change WB
+    patience: 10 # Might need to change WB
   # - _target_: vap.callbacks.VADMaskCallback
   #   probability: 0.5
   #   scale: 0
