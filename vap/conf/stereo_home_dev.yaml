@@ -8,7 +8,7 @@ datamodule:
   frame_hz: 50
   mono: false
   #video_feature_groups: [all] #All features
-  video_features_groups: [head, alignment_head_rotation, body_pose, left_hand, right_hand] # Body features -- video_dim 159
+  video_feature_groups: [head, alignment_head_rotation, body_pose, left_hand, right_hand] # Body features -- video_dim 159
   #video_features_groups: [gaze] -- video_dim 2
   #video_features_groups: [fau, expression] # Facial action units + expression -- video_dim 129 
 
