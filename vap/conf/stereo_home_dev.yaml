@@ -7,7 +7,12 @@ datamodule:
   sample_rate: 16000
   frame_hz: 50
   mono: false
-  video_feature_groups: [all]
+  #video_feature_groups: [all] #All features
+  video_features_groups: [head, alignment_head_rotation, body_pose, left_hand, right_hand] # Body features -- video_dim 159
+  #video_features_groups: [gaze] -- video_dim 2
+  #video_features_groups: [fau, expression] # Facial action units + expression -- video_dim 129 
+
+
   batch_size: 8
   num_workers: 4
   pin_memory: true
@@ -19,7 +24,7 @@ module:
     _target_: vap.modules.VAP.VAP
     bin_times: [0.2, 0.4, 0.6, 0.8]
     frame_hz: 50
-    video_dim: 290 # Might need to change WB 
+    video_dim: 159
     encoder:
       _target_: vap.modules.encoder.EncoderCPC
       load_pretrained: true 
