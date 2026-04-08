@@ -1,0 +1,6 @@
+runtime:
+  checkpoint_path: ???
+  test_csv_path: ???
+  batch_size: 20
+  num_workers: 4
+  device: auto

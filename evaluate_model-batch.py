@@ -1,0 +1,131 @@
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+
+import hydra
+import torch
+from hydra.utils import instantiate, to_absolute_path
+from omegaconf import DictConfig, OmegaConf
+from tqdm import tqdm
+
+
+def _to_device(batch: dict[str, Any], device: torch.device) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    for k, v in batch.items():
+        out[k] = v.to(device, non_blocking=True) if torch.is_tensor(v) else v
+    return out
+
+
+def _load_checkpoint(module: torch.nn.Module, checkpoint_path: Path) -> None:
+    ckpt = torch.load(checkpoint_path, map_location="cpu")
+    if not isinstance(ckpt, dict):
+        raise ValueError(f"Unsupported checkpoint format in {checkpoint_path}")
+    state_dict = ckpt["state_dict"] if "state_dict" in ckpt else ckpt
+    missing, unexpected = module.load_state_dict(state_dict, strict=False)
+    if missing:
+        print(f"[warn] Missing keys in checkpoint load: {len(missing)}")
+    if unexpected:
+        print(f"[warn] Unexpected keys in checkpoint load: {len(unexpected)}")
+
+
+def _evaluate(
+    module: torch.nn.Module,
+    cfg: DictConfig,
+    csv_path: Path,
+    batch_size: int,
+    num_workers: int,
+) -> None:
+    cfg.datamodule.test_path = str(csv_path)
+    cfg.datamodule.batch_size = int(batch_size)
+    cfg.datamodule.num_workers = int(num_workers)
+
+    datamodule = instantiate(cfg.datamodule)
+    datamodule.prepare_data()
+    datamodule.setup("test")
+    loader = datamodule.test_dataloader()
+
+    metric = getattr(module, "val_metric", None)
+    if metric is not None:
+        metric.reset()
+
+    total_examples = 0
+    vap_loss_sum = 0.0
+    va_loss_sum = 0.0
+
+    with torch.inference_mode():
+        for batch in tqdm(loader, desc="Evaluating"):
+            batch = _to_device(batch, module.device)
+            out = module.model(batch["waveform"])
+
+            labels = module.model.extract_labels(batch["vad"])
+            vap_loss = module.model.objective.loss_vap(
+                out["logits"], labels, reduction="mean"
+            )
+            va_loss = module.model.objective.loss_vad(out["vad"], batch["vad"])
+
+            if metric is not None:
+                probs = module.model.objective.get_probs(out["logits"])
+                metric.update_batch(probs, batch["vad"])
+
+            bsz = int(batch["waveform"].shape[0])
+            total_examples += bsz
+            vap_loss_sum += float(vap_loss) * bsz
+            va_loss_sum += float(va_loss) * bsz
+
+    print(f"\nloss_vap:   {vap_loss_sum / total_examples:.6f}")
+    print(f"loss_vad:   {va_loss_sum / total_examples:.6f}")
+    print(f"loss_total: {(vap_loss_sum + va_loss_sum) / total_examples:.6f}")
+
+    if metric is None:
+        print("No metric configured.")
+        return
+
+    scores = metric.compute()
+    metric.reset()
+    print()
+    for event_name, score in scores.items():
+        acc0 = float(score["acc"][0])
+        acc1 = float(score["acc"][1])
+        bacc = (acc0 + acc1) / 2.0
+        f1 = float(score["f1"])
+        print(f"{event_name}: acc0={acc0:.4f}  acc1={acc1:.4f}  bacc={bacc:.4f}  f1={f1:.4f}")
+
+
+@hydra.main(version_base=None, config_path="vap/conf", config_name="evaluate")
+def main(cfg_eval: DictConfig) -> None:
+    checkpoint_path = Path(to_absolute_path(str(cfg_eval.runtime.checkpoint_path)))
+    test_csv_path = Path(to_absolute_path(str(cfg_eval.runtime.test_csv_path)))
+    model_config_path = Path(to_absolute_path("vap/conf/stereo_home_dev.yaml"))
+
+    if not checkpoint_path.is_file():
+        raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
+    if not test_csv_path.is_file():
+        raise FileNotFoundError(f"Test CSV not found: {test_csv_path}")
+
+    cfg = OmegaConf.load(model_config_path)
+    module = instantiate(cfg.module)
+    if getattr(module, "test_metric", None) is None and "val_metric" in cfg.module:
+        module.test_metric = instantiate(cfg.module.val_metric)
+    _load_checkpoint(module, checkpoint_path)
+
+    device_opt = str(cfg_eval.runtime.device).lower()
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu") if device_opt == "auto" else torch.device(device_opt)
+    module = module.to(device)
+    module.eval()
+
+    print(f"checkpoint: {checkpoint_path}")
+    print(f"test_csv:   {test_csv_path}")
+    print(f"device:     {device}")
+
+    _evaluate(
+        module=module,
+        cfg=cfg,
+        csv_path=test_csv_path,
+        batch_size=int(cfg_eval.runtime.batch_size),
+        num_workers=int(cfg_eval.runtime.num_workers),
+    )
+
+
+if __name__ == "__main__":
+    main()
