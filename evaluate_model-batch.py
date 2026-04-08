@@ -4,10 +4,29 @@ from pathlib import Path
 from typing import Any
 
 import hydra
+import pandas as pd
 import torch
 from hydra.utils import instantiate, to_absolute_path
 from omegaconf import DictConfig, OmegaConf
 from tqdm import tqdm
+
+
+def _split_test_csv(test_csv_path: Path) -> dict[str, Path]:
+    df = pd.read_csv(test_csv_path)
+    text = df.apply(
+        lambda r: " ".join(str(r.get(c, "")) for c in ("dataset", "audio_path_a", "audio_path_b", "session") if c in df.columns),
+        axis=1,
+    ).str.lower()
+
+    improvised_mask = text.str.contains("improvised", regex=False)
+    naturalistic_mask = text.str.contains("naturalistic", regex=False)
+
+    improvised_path = test_csv_path.with_name(f"{test_csv_path.stem}_improvised{test_csv_path.suffix}")
+    naturalistic_path = test_csv_path.with_name(f"{test_csv_path.stem}_naturalistic{test_csv_path.suffix}")
+    df[improvised_mask].to_csv(improvised_path, index=False)
+    df[naturalistic_mask].to_csv(naturalistic_path, index=False)
+
+    return {"improvised": improvised_path, "naturalistic": naturalistic_path}
 
 
 def _to_device(batch: dict[str, Any], device: torch.device) -> dict[str, Any]:
@@ -122,13 +141,16 @@ def main(cfg_eval: DictConfig) -> None:
     print(f"test_csv:   {test_csv_path}")
     print(f"device:     {device}")
 
-    _evaluate(
-        module=module,
-        cfg=cfg,
-        csv_path=test_csv_path,
-        batch_size=int(cfg_eval.runtime.batch_size),
-        num_workers=int(cfg_eval.runtime.num_workers),
-    )
+    kwargs = dict(module=module, cfg=cfg, batch_size=int(cfg_eval.runtime.batch_size), num_workers=int(cfg_eval.runtime.num_workers))
+
+    print("\n=== Full ===")
+    _evaluate(csv_path=test_csv_path, **kwargs)
+
+    split_paths = _split_test_csv(test_csv_path)
+    print("\n=== Improvised ===")
+    _evaluate(csv_path=split_paths["improvised"], **kwargs)
+    print("\n=== Naturalistic ===")
+    _evaluate(csv_path=split_paths["naturalistic"], **kwargs)
 
 
 if __name__ == "__main__":
