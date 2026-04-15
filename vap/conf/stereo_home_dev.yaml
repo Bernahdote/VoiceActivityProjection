@@ -8,8 +8,8 @@ datamodule:
   frame_hz: 50
   mono: false
   #video_feature_groups: [all] #All features
-  video_feature_groups: [body_pose, left_hand_pose, right_hand_pose] # Body features -- video_dim 153
-  #video_feature_groups: [head, gaze, alignment_head_rotation] #Gaze -- video_dim 8
+  #video_feature_groups: [body_pose, left_hand_pose, right_hand_pose] # Body features -- video_dim 153
+  video_feature_groups: [head, gaze, alignment_head_rotation] #Gaze -- video_dim 8
   #video_feature_groups: [fau, expression] # Facial action units + expression #-- video_dim 129 
 
   batch_size: 8
@@ -23,7 +23,7 @@ module:
     _target_: vap.modules.VAP.VAP
     bin_times: [0.2, 0.4, 0.6, 0.8]
     frame_hz: 50
-    video_dim: 153
+    video_dim: 8
     encoder:
       _target_: vap.modules.encoder.EncoderCPC
       load_pretrained: true 
