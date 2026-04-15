@@ -372,7 +372,7 @@ class VAPDataModule(L.LightningDataModule):
             batch_size=self.batch_size,
             pin_memory=self.pin_memory,
             num_workers=self.num_workers,
-            prefetch_factor=self.prefetch_factor,
+            prefetch_factor=self.prefetch_factor if self.num_workers > 0 else None,
             collate_fn=self.collate_fn,
             shuffle=True,
         )
@@ -383,7 +383,7 @@ class VAPDataModule(L.LightningDataModule):
             batch_size=self.batch_size,
             pin_memory=self.pin_memory,
             num_workers=self.num_workers,
-            prefetch_factor=self.prefetch_factor,
+            prefetch_factor=self.prefetch_factor if self.num_workers > 0 else None,
             collate_fn=self.collate_fn,
             shuffle=False,
         )
@@ -394,7 +394,7 @@ class VAPDataModule(L.LightningDataModule):
             batch_size=self.batch_size,
             pin_memory=self.pin_memory,
             num_workers=self.num_workers,
-            prefetch_factor=self.prefetch_factor,
+            prefetch_factor=self.prefetch_factor if self.num_workers > 0 else None,
             collate_fn=self.collate_fn,
             shuffle=False,
         )
