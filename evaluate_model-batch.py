@@ -37,7 +37,7 @@ def _to_device(batch: dict[str, Any], device: torch.device) -> dict[str, Any]:
 
 
 def _load_checkpoint(module: torch.nn.Module, checkpoint_path: Path) -> None:
-    ckpt = torch.load(checkpoint_path, map_location="cpu")
+    ckpt = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
     if not isinstance(ckpt, dict):
         raise ValueError(f"Unsupported checkpoint format in {checkpoint_path}")
     state_dict = ckpt["state_dict"] if "state_dict" in ckpt else ckpt
