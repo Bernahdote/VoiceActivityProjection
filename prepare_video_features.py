@@ -19,6 +19,7 @@ FEATURE_KEYS = [
     "movement:expression",
     "movement:alignment_head_rotation",
     "movement:FAUToken",
+    "movement:FAUValue",
     "smplh:body_pose",
     "smplh:left_hand_pose",
     "smplh:right_hand_pose",

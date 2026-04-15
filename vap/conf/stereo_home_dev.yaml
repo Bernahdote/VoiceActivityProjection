@@ -12,7 +12,7 @@ datamodule:
   #video_feature_groups: [head, gaze, alignment_head_rotation] #Gaze -- video_dim 8
   video_feature_groups: [fau, expression] # Facial action units + expression #-- video_dim 129 
 
-  batch_size: 8
+  batch_size: 20
   num_workers: 4
   pin_memory: true
   prefetch_factor: 2
