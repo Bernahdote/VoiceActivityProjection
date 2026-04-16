@@ -7,7 +7,7 @@ import hydra
 import pandas as pd
 import torch
 from hydra.utils import instantiate, to_absolute_path
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import DictConfig
 from tqdm import tqdm
 
 
@@ -119,14 +119,13 @@ def _evaluate(
 def main(cfg_eval: DictConfig) -> None:
     checkpoint_path = Path(to_absolute_path(str(cfg_eval.runtime.checkpoint_path)))
     test_csv_path = Path(to_absolute_path(str(cfg_eval.runtime.test_csv_path)))
-    model_config_path = Path(to_absolute_path("vap/conf/stereo_home_dev.yaml"))
 
     if not checkpoint_path.is_file():
         raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
     if not test_csv_path.is_file():
         raise FileNotFoundError(f"Test CSV not found: {test_csv_path}")
 
-    cfg = OmegaConf.load(model_config_path)
+    cfg = cfg_eval
     module = instantiate(cfg.module)
     if getattr(module, "test_metric", None) is None and "val_metric" in cfg.module:
         module.test_metric = instantiate(cfg.module.val_metric)

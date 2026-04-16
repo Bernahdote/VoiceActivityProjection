@@ -1,3 +1,7 @@
+defaults:
+  - stereo_home_dev
+  - _self_
+
 runtime:
   checkpoint_path: ???
   test_csv_path: ???
