@@ -10,12 +10,30 @@ from omegaconf import DictConfig
 from tqdm import tqdm
 
 FAU_NAMES = [
-    "InnerBrowRaiser", "OuterBrowRaiser", "BrowLowerer",
-    "UpperLidRaiser", "CheekRaiser", "LidTightener", "NoseWrinkler", "UpperLipRaiser",
-    "LipCornerPuller", "CheekPuffer", "Dimpler",
-    "LipCornerDepressor", "LowerLipDepressor", "ChinRaiser", "LipPuckerer",
-    "LipStretcher", "LipFunneler", "LipTightener", "LipPressor", "LipsPart",
-    "JawDrop", "LipSuck", "JawSideways", "EyesClosed" 
+    "InnerBrowRaiser (AU1)",
+    "OuterBrowRaiser (AU2)",
+    "BrowLowerer (AU4)",
+    "UpperLidRaiser (AU5)",
+    "CheekRaiser (AU6)",
+    "LidTightener (AU7)",
+    "NoseWrinkler (AU9)",
+    "UpperLipRaiser (AU10)",
+    "LipCornerPull (AU12)",
+    "CheekPuffer (AU13)",
+    "Dimpler (AU14)",
+    "LipCornerDepressor (AU15)",
+    "LowerLipDepressor (AU16)",
+    "ChinRaiser (AU17)",
+    "LipPuckerer (AU18)",
+    "LipStretcher (AU20)",
+    "LipFunneler (AU22)",
+    "LipTightener (AU23)",
+    "LipPressor (AU24)",
+    "LipsParts (AU25)",
+    "JawDrop (AU26)",
+    "LipSuck (AU28)",
+    "JawSideways (AU30)",
+    "EyesClosed (AU43)",
 ]
 
 
@@ -86,6 +104,8 @@ def main(cfg_eval: DictConfig) -> None:
 
     cfg_eval.datamodule.test_path = str(test_csv_path)
     cfg_eval.datamodule.video_feature_groups = ["fauv"]
+    cfg_eval.datamodule.batch_size = int(cfg_eval.runtime.batch_size)
+    cfg_eval.datamodule.num_workers = int(cfg_eval.runtime.num_workers)
     datamodule = instantiate(cfg_eval.datamodule)
     datamodule.prepare_data()
     datamodule.setup("test")
