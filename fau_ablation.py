@@ -15,7 +15,7 @@ FAU_NAMES = [
     "LipCornerPuller", "CheekPuffer", "Dimpler",
     "LipCornerDepressor", "LowerLipDepressor", "ChinRaiser", "LipPuckerer",
     "LipStretcher", "LipFunneler", "LipTightener", "LipPressor", "LipsPart",
-    "JawDrop", "LipSuck", "JawSideways", "EyesClosed"  # placeholder if 24th is unnamed
+    "JawDrop", "LipSuck", "JawSideways", "EyesClosed" 
 ]
 
 
@@ -63,7 +63,7 @@ def _evaluate_with_mask(module, loader, device, zeroed_dim: int | None = None) -
     return loss_sum / total_examples
 
 
-CHECKPOINT = "./runs_new/VAP_debug/s4oh9ogq/checkpoints/epoch=6-step=22505.ckpt"
+CHECKPOINT = "./runs_new/VAP_debug/9n7fohs7/checkpoints/epoch=11-step=38580.ckpt"
 TEST_CSV = "/mnt/sdb/willem/datasets/splits/val_sliding.csv"
 
 
@@ -77,6 +77,7 @@ def main(cfg_eval: DictConfig) -> None:
     if not test_csv_path.is_file():
         raise FileNotFoundError(f"Test CSV not found: {test_csv_path}")
 
+    cfg_eval.module.model.video_dim = 24
     module = instantiate(cfg_eval.module)
     _load_checkpoint(module, checkpoint_path)
 
@@ -86,7 +87,6 @@ def main(cfg_eval: DictConfig) -> None:
 
     cfg_eval.datamodule.test_path = str(test_csv_path)
     cfg_eval.datamodule.video_feature_groups = ["fauv"]
-    cfg_eval.module.model.video_dim = 24
     datamodule = instantiate(cfg_eval.datamodule)
     datamodule.prepare_data()
     datamodule.setup("test")
