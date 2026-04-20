@@ -54,11 +54,10 @@ def _evaluate_with_mask(module, loader, device, zeroed_dim: int | None = None) -
             )
             labels = module.model.extract_labels(batch["vad"])
             loss = module.model.objective.loss_vap(out["logits"], labels, reduction="mean")
-            va_loss = module.model.objective.loss_vad(out["vad"], batch["vad"])
 
             bsz = int(batch["waveform"].shape[0])
             total_examples += bsz
-            loss_sum += (float(loss) + float(va_loss)) * bsz
+            loss_sum += float(loss) * bsz
 
     return loss_sum / total_examples
 
