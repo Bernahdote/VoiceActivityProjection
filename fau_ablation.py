@@ -123,13 +123,29 @@ def main(cfg_eval: DictConfig) -> None:
     for i in range(n_dims):
         loss = _evaluate_with_mask(module, loader, device, zeroed_dim=i)
         delta = loss - baseline
+        pct = 100.0 * delta / baseline
         name = FAU_NAMES[i] if i < len(FAU_NAMES) else f"dim_{i}"
-        results.append((i, name, loss, delta))
-        print(f"[{i:2d}] {name:<22s}  loss={loss:.6f}  delta={delta:+.6f}")
+        results.append((i, name, loss, delta, pct))
+        print(f"[{i:2d}] {name:<26s}  loss={loss:.6f}  delta={delta:+.6f}  ({pct:+.2f}%)")
 
     print("\n--- Ranked by importance (largest delta first) ---")
-    for i, name, loss, delta in sorted(results, key=lambda x: -x[3]):
-        print(f"[{i:2d}] {name:<22s}  loss={loss:.6f}  delta={delta:+.6f}")
+    for i, name, loss, delta, pct in sorted(results, key=lambda x: -x[3]):
+        print(f"[{i:2d}] {name:<26s}  loss={loss:.6f}  delta={delta:+.6f}  ({pct:+.2f}%)")
+
+    import matplotlib.pyplot as plt
+    results_sorted = sorted(results, key=lambda x: -x[3])
+    names = [r[1] for r in results_sorted]
+    pcts = [r[4] for r in results_sorted]
+    colors = ["tomato" if p > 0 else "steelblue" for p in pcts]
+
+    plt.figure(figsize=(10, 8))
+    plt.barh(names[::-1], pcts[::-1], color=colors[::-1])
+    plt.axvline(0, color="black", linewidth=0.8)
+    plt.xlabel("% change in VAP loss vs baseline")
+    plt.title("FAU ablation — importance by loss increase")
+    plt.tight_layout()
+    plt.savefig("fau_ablation.png", dpi=150)
+    print("\nPlot saved to fau_ablation.png")
 
 
 if __name__ == "__main__":
