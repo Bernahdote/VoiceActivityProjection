@@ -64,7 +64,7 @@ def _evaluate_with_mask(module, loader, device, zeroed_dim: int | None = None) -
 
 
 CHECKPOINT = "./runs_new/VAP_debug/9n7fohs7/checkpoints/epoch=11-step=38580.ckpt"
-TEST_CSV = "/mnt/sdb/willem/datasets/splits/val_sliding.csv"
+TEST_CSV = "/mnt/sdb/willem/datasets/splits/test_sliding.csv"
 
 
 @hydra.main(version_base=None, config_path="vap/conf", config_name="evaluate")
