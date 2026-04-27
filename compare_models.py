@@ -140,6 +140,10 @@ if __name__ == "__main__":
     model_base = mod_base.model.to(device).eval()
     if not hasattr(model_base, "video_dim"):
         model_base.video_dim = 0
+    # Baseline was trained with nn.Identity() feature_projection (encoder.dim == transformer.dim == 256).
+    # Current branch replaced it with an MLP — reset it so the loaded transformer weights see
+    # the same representation they were trained with.
+    model_base.feature_projection = torch.nn.Identity()
 
     print("Loading FAU model...")
     mod_fau   = VAPModule.load_from_checkpoint(CKPT_FAU, map_location=device, weights_only=False)
