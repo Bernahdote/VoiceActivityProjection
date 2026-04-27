@@ -10,6 +10,8 @@ from hydra.utils import instantiate, to_absolute_path
 from omegaconf import DictConfig
 from tqdm import tqdm
 
+from vap.modules.lightning_module import VAPModule
+
 
 def _split_test_csv(test_csv_path: Path) -> dict[str, Path]:
     df = pd.read_csv(test_csv_path)
@@ -139,10 +141,11 @@ def main(cfg_eval: DictConfig) -> None:
         raise FileNotFoundError(f"Test CSV not found: {test_csv_path}")
 
     cfg = cfg_eval
-    module = instantiate(cfg.module)
-    if getattr(module, "test_metric", None) is None and "val_metric" in cfg.module:
-        module.test_metric = instantiate(cfg.module.val_metric)
-    _load_checkpoint(module, checkpoint_path)
+    module = VAPModule.load_from_checkpoint(
+        checkpoint_path, map_location="cpu", weights_only=False
+    )
+    if getattr(module, "val_metric", None) is None and "val_metric" in cfg.module:
+        module.val_metric = instantiate(cfg.module.val_metric)
 
     device_opt = str(cfg_eval.runtime.device).lower()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu") if device_opt == "auto" else torch.device(device_opt)
