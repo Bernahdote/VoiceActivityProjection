@@ -110,6 +110,10 @@ def _evaluate(
         print("No metric configured.")
         return
 
+    for event_name in metric.EVENT_NAMES:
+        n = sum(len(t) for t in metric.preds[event_name])
+        print(f"  {event_name}: {n} samples")
+
     scores = metric.compute()
     metric.reset()
 
@@ -146,11 +150,8 @@ def main(cfg_eval: DictConfig) -> None:
     )
     if not hasattr(module.model, "video_dim"):
         module.model.video_dim = 0
-    raw_metric = getattr(module, "val_metric", None)
-    print(f"[debug] val_metric after load_from_checkpoint: {type(raw_metric).__name__} = {raw_metric}")
     if "val_metric" in cfg.module:
         module.val_metric = instantiate(cfg.module.val_metric)
-        print(f"[debug] val_metric after instantiate: {type(module.val_metric).__name__}")
 
     device_opt = str(cfg_eval.runtime.device).lower()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu") if device_opt == "auto" else torch.device(device_opt)
