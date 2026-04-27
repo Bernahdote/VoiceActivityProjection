@@ -44,8 +44,12 @@ def _load_checkpoint(module: torch.nn.Module, checkpoint_path: Path) -> None:
     missing, unexpected = module.load_state_dict(state_dict, strict=False)
     if missing:
         print(f"[warn] Missing keys in checkpoint load: {len(missing)}")
+        for k in missing:
+            print(f"  missing: {k}")
     if unexpected:
         print(f"[warn] Unexpected keys in checkpoint load: {len(unexpected)}")
+        for k in unexpected:
+            print(f"  unexpected: {k}")
 
 
 def _evaluate(
