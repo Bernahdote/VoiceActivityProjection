@@ -106,13 +106,22 @@ def _evaluate(
 
     scores = metric.compute()
     metric.reset()
+
+    LABELS = {
+        "hs": ("Hold",      "Shift"),
+        "ls": ("Long",      "Short"),
+        "sp": ("Pre-hold",  "Pre-shift"),
+        "bp": ("Non-BC",    "Backchannel"),
+    }
+
     print()
     for event_name, score in scores.items():
         acc0 = float(score["acc"][0])
         acc1 = float(score["acc"][1])
         bacc = (acc0 + acc1) / 2.0
-        f1 = float(score["f1"])
-        print(f"{event_name}: acc0={acc0:.4f}  acc1={acc1:.4f}  bacc={bacc:.4f}  f1={f1:.4f}")
+        f1   = float(score["f1"])
+        lbl0, lbl1 = LABELS.get(event_name, ("acc0", "acc1"))
+        print(f"{event_name.upper()}:  {lbl0}={acc0:.4f}  {lbl1}={acc1:.4f}  bAcc={bacc:.4f}  F1={f1:.4f}")
 
 
 @hydra.main(version_base=None, config_path="vap/conf", config_name="evaluate")
