@@ -144,6 +144,8 @@ def main(cfg_eval: DictConfig) -> None:
     module = VAPModule.load_from_checkpoint(
         checkpoint_path, map_location="cpu", weights_only=False
     )
+    if not hasattr(module.model, "video_dim"):
+        module.model.video_dim = 0
     if getattr(module, "val_metric", None) is None and "val_metric" in cfg.module:
         module.val_metric = instantiate(cfg.module.val_metric)
 
