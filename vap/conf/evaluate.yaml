@@ -8,3 +8,4 @@ runtime:
   batch_size: 20
   num_workers: 4
   device: auto
+  base: false  # set true when evaluating a newMaster (audio-only) checkpoint
