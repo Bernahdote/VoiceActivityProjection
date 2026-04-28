@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import random
+
 import hydra
 import pandas as pd
 import torch
@@ -119,7 +121,7 @@ def _evaluate(
 
     LABELS = {
         "hs": ("Hold",      "Shift"),
-        "ls": ("Long",      "Short"),
+        "ls": ("Short",     "Long"),
         "sp": ("Pre-hold",  "Pre-shift"),
         "bp": ("Non-BC",    "Backchannel"),
     }
@@ -138,6 +140,8 @@ def _evaluate(
 def main(cfg_eval: DictConfig) -> None:
     checkpoint_path = Path(to_absolute_path(str(cfg_eval.runtime.checkpoint_path)))
     test_csv_path = Path(to_absolute_path(str(cfg_eval.runtime.test_csv_path)))
+
+    random.seed(1)
 
     if not checkpoint_path.is_file():
         raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
