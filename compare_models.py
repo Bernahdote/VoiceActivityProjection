@@ -46,6 +46,30 @@ SMOOTH_W  = 15
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
+TOP_K      = 5
+GAP_ROWS   = 1
+GRAY_RGB   = np.array([1.0,  1.0,  1.0],  dtype=np.float32)
+BLUE_RGB   = np.array([0.42, 0.64, 0.80], dtype=np.float32)
+ORANGE_RGB = np.array([0.95, 0.72, 0.42], dtype=np.float32)
+
+
+def build_topk_window_rgb(topk_states, gap_rows=GAP_ROWS):
+    """Identical to running-visual.correct.py — builds a stacked 2×4 color grid
+    for the top-k predicted classes.  topk_states: (k, 2, n_bins)."""
+    k = topk_states.shape[0]
+    n_bins_local = topk_states.shape[-1]
+    stride = 2 + gap_rows
+    total_rows = (k * 2) + (max(0, k - 1) * gap_rows)
+    window_rgb = np.tile(GRAY_RGB, (total_rows, n_bins_local, 1))
+    row_offsets = np.zeros(k, dtype=np.int32)
+    for r in range(k):
+        row0 = r * stride
+        row_offsets[r] = row0
+        window_rgb[row0,     topk_states[r, 0] > 0.5] = BLUE_RGB
+        window_rgb[row0 + 1, topk_states[r, 1] > 0.5] = ORANGE_RGB
+    return window_rgb, row_offsets
+
+
 def run_ffmpeg(args):
     subprocess.run(args, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
@@ -85,46 +109,59 @@ def build_sample_csv(tmp_dir: Path):
     return csv_path, df
 
 
-def run_inference(model, dm, device):
-    """Mirrors evaluate_model-batch.py.
-    Returns (loss, p_now, p_future, vad_pred)
-      loss/p_now/p_future : (T,)   per-frame
-      vad_pred            : (T, 2) model predicted VAD (sigmoid)
+def run_inference(model, dm, device, use_video: bool = True):
+    """Returns (loss, p_now, p_future, vad_pred, probs, gt_bins)
+      loss/p_now/p_future : (T,)      per-frame
+      vad_pred            : (T, 2)    model predicted VAD (sigmoid)
+      probs               : (T, 256)  full softmax distribution (for top-k display)
+      gt_bins             : (T, 2, 4) ground-truth binary projection pattern
     """
     step_frames = int(round((WINDOW_DURATION - WINDOW_OVERLAP) * model.frame_hz))
-    loss_agg = p_now_agg = p_fut_agg = vpred_agg = None
+    loss_agg = p_now_agg = p_fut_agg = vpred_agg = probs_agg = gt_bins_agg = None
 
     with torch.inference_mode():
         for batch in dm.test_dataloader():
-            waveform     = batch["waveform"].to(device)
-            vad          = batch["vad"].to(device)
-            video_feat_a = batch["video_features_a"].to(device)
-            video_feat_b = batch["video_features_b"].to(device)
+            waveform = batch["waveform"].to(device)
+            vad      = batch["vad"].to(device)
 
-            out = model(waveform,
-                        video_features_a=video_feat_a,
-                        video_features_b=video_feat_b)
+            if use_video:
+                out = model(waveform,
+                            video_features_a=batch["video_features_a"].to(device),
+                            video_features_b=batch["video_features_b"].to(device))
+            else:
+                out = model(waveform)
 
             labels   = model.extract_labels(vad)
+            n_labels = labels.shape[1]
             loss     = model.objective.loss_vap(out["logits"], labels, reduction="none")[0]
-            vad_pred = out["vad"][0].sigmoid().cpu()   # (T, 2)
+            vad_pred = out["vad"][0, :n_labels].sigmoid().cpu()
 
             p_agg = model.objective.get_probs(out["logits"])
-            p_now = p_agg["p_now"][0]
-            p_fut = p_agg["p_future"][0]
+            p_now = p_agg["p_now"][0, :n_labels]
+            p_fut = p_agg["p_future"][0, :n_labels]
+
+            # Full softmax distribution — needed for top-k display
+            probs = out["logits"][0, :n_labels].softmax(-1).cpu()   # (T, 256)
+
+            # Ground-truth class → decode to binary (2, 4) pattern per frame
+            gt_bins = model.objective.codebook.decode(labels[0]).float().cpu()   # (T, 2, 4)
 
             if loss_agg is None:
-                loss_agg  = loss
-                p_now_agg = p_now
-                p_fut_agg = p_fut
-                vpred_agg = vad_pred
+                loss_agg    = loss
+                p_now_agg   = p_now
+                p_fut_agg   = p_fut
+                vpred_agg   = vad_pred
+                probs_agg   = probs
+                gt_bins_agg = gt_bins
             else:
-                loss_agg  = torch.cat([loss_agg,  loss[-step_frames:]])
-                p_now_agg = torch.cat([p_now_agg, p_now[-step_frames:]])
-                p_fut_agg = torch.cat([p_fut_agg, p_fut[-step_frames:]])
-                vpred_agg = torch.cat([vpred_agg, vad_pred[-step_frames:]])
+                loss_agg    = torch.cat([loss_agg,    loss[-step_frames:]])
+                p_now_agg   = torch.cat([p_now_agg,   p_now[-step_frames:]])
+                p_fut_agg   = torch.cat([p_fut_agg,   p_fut[-step_frames:]])
+                vpred_agg   = torch.cat([vpred_agg,   vad_pred[-step_frames:]])
+                probs_agg   = torch.cat([probs_agg,   probs[-step_frames:]])
+                gt_bins_agg = torch.cat([gt_bins_agg, gt_bins[-step_frames:]])
 
-    return loss_agg, p_now_agg, p_fut_agg, vpred_agg
+    return loss_agg, p_now_agg, p_fut_agg, vpred_agg, probs_agg, gt_bins_agg
 
 
 def smooth(y: np.ndarray, w: int = SMOOTH_W) -> np.ndarray:
@@ -158,12 +195,12 @@ if __name__ == "__main__":
 
         print("Running baseline inference...")
         dm_base = build_datamodule(csv_path, video_feature_groups=["fauv"])
-        loss_base, p_now_base, p_fut_base, vad_pred_base = run_inference(model_base, dm_base, device)
+        loss_base, p_now_base, p_fut_base, vad_pred_base, probs_base, gt_bins = run_inference(model_base, dm_base, device, use_video=False)
         print(f"  Baseline  — loss mean: {loss_base.mean():.4f}  min: {loss_base.min():.4f}  max: {loss_base.max():.4f}")
 
         print("Running FAU inference...")
         dm_fau = build_datamodule(csv_path, video_feature_groups=["fauv"])
-        loss_fau, p_now_fau, p_fut_fau, vad_pred_fau = run_inference(model_fau, dm_fau, device)
+        loss_fau, p_now_fau, p_fut_fau, vad_pred_fau, probs_fau, _ = run_inference(model_fau, dm_fau, device, use_video=True)
         print(f"  FAU       — loss mean: {loss_fau.mean():.4f}  min: {loss_fau.min():.4f}  max: {loss_fau.max():.4f}")
 
     segment_start = float(samples_df["start"].min())
@@ -181,6 +218,15 @@ if __name__ == "__main__":
     p_fut_fau_s  = smooth(p_fut_fau[:n_frames].numpy())
     diff_s       = loss_base_s - loss_fau_s
 
+    # Tensors kept for per-frame torch.topk — sliced to n_frames
+    probs_base_t = probs_base[:n_frames]    # (T, 256)
+    probs_fau_t  = probs_fau[:n_frames]     # (T, 256)
+    gt_bins_np   = gt_bins[:n_frames].numpy()  # (T, 2, 4)
+
+    # All 256 class patterns decoded once — (256, 2, 4)
+    class_states = model_fau.objective.codebook.decode(
+        torch.arange(256)).cpu().numpy()
+
     vad_base = vad_pred_base[:n_frames].numpy()   # (T, 2)
     vad_fau  = vad_pred_fau[:n_frames].numpy()    # (T, 2)
 
@@ -195,20 +241,31 @@ if __name__ == "__main__":
     t_audio = np.arange(n_samp) / sr
 
     # ── figure layout ─────────────────────────────────────────────────────────
-    #  col 0: video A | col 1: video B | col 2: 5 stacked signal panels
-    fig = plt.figure(figsize=(24, 14))
+    #  col 0: video A | col 1: video B | col 2: 5 signal panels + 3 bin grids
+    fig = plt.figure(figsize=(24, 16))
     gs  = gridspec.GridSpec(1, 3, figure=fig, width_ratios=[1, 1, 2.4], wspace=0.08)
-    fig.subplots_adjust(left=0.05, right=0.97, top=0.95, bottom=0.05, hspace=0.35)
+    fig.subplots_adjust(left=0.06, right=0.97, top=0.95, bottom=0.04, hspace=0.35)
 
     ax_vid_a = fig.add_subplot(gs[0]); ax_vid_a.axis("off"); ax_vid_a.set_title("Speaker A", fontsize=12)
     ax_vid_b = fig.add_subplot(gs[1]); ax_vid_b.axis("off"); ax_vid_b.set_title("Speaker B", fontsize=12)
 
-    gs_right = gridspec.GridSpecFromSubplotSpec(5, 1, subplot_spec=gs[2], hspace=0.50)
+    gs_right = gridspec.GridSpecFromSubplotSpec(6, 1, subplot_spec=gs[2], hspace=0.55,
+                                                height_ratios=[1, 1, 1, 1, 1, 0.6])
     ax_wav_a = fig.add_subplot(gs_right[0])
     ax_wav_b = fig.add_subplot(gs_right[1], sharex=ax_wav_a)
     ax_pnow  = fig.add_subplot(gs_right[2], sharex=ax_wav_a)
     ax_pfut  = fig.add_subplot(gs_right[3], sharex=ax_wav_a)
     ax_loss  = fig.add_subplot(gs_right[4], sharex=ax_wav_a)
+
+    # Bottom row: [GT grid | Base bars | Base windows | FAU bars | FAU windows]
+    gs_bins = gridspec.GridSpecFromSubplotSpec(
+        1, 5, subplot_spec=gs_right[5], wspace=0.15,
+        width_ratios=[0.9, 1, 0.9, 1, 0.9])
+    ax_gt_win        = fig.add_subplot(gs_bins[0])
+    ax_topk_base     = fig.add_subplot(gs_bins[1])
+    ax_topk_base_win = fig.add_subplot(gs_bins[2])
+    ax_topk_fau      = fig.add_subplot(gs_bins[3])
+    ax_topk_fau_win  = fig.add_subplot(gs_bins[4])
 
     # ── waveform A + predicted VAD A ──────────────────────────────────────────
     ax_wav_a.plot(t_audio, wav_a, color=COL_WAV_A, alpha=0.9, lw=0.7)
@@ -292,6 +349,63 @@ if __name__ == "__main__":
     ax_loss.grid(alpha=0.3)
     ax_loss.margins(x=0)
 
+    # ── top-k bin panels ──────────────────────────────────────────────────────
+    # --- GT: single-frame 2×4 grid ---
+    gt_init_rgb, _ = build_topk_window_rgb(gt_bins_np[0:1])   # (k=1) → (2, 4, 3)
+    im_gt_win = ax_gt_win.imshow(gt_init_rgb, aspect="auto", interpolation="nearest", origin="upper")
+    ax_gt_win.set_xticks(np.arange(-0.5, 4, 1), minor=True)
+    ax_gt_win.set_yticks(np.arange(-0.5, 2, 1), minor=True)
+    ax_gt_win.grid(which="minor", color="#444444", linewidth=1.0)
+    ax_gt_win.tick_params(which="both", bottom=False, left=False, labelbottom=False, labelleft=False)
+    ax_gt_win.set_title("GT bins", fontsize=8)
+
+    def _setup_topk_bar_ax(ax, title, color):
+        """Horizontal bar chart for top-k class probabilities."""
+        ax.set_title(title, fontsize=8)
+        ax.set_xlim(0, 100)
+        ax.set_ylim(-0.5, TOP_K - 0.5)
+        ax.invert_yaxis()
+        ax.set_xlabel("%", fontsize=7)
+        ax.tick_params(labelsize=7)
+        return ax.barh(np.arange(TOP_K), np.zeros(TOP_K),
+                       color=color, alpha=0.75, height=0.7)
+
+    bars_base = _setup_topk_bar_ax(ax_topk_base, "Baseline top-5", COL_BASE)
+    bars_fau  = _setup_topk_bar_ax(ax_topk_fau,  "FAU top-5",     COL_FAU)
+
+    def _setup_topk_win_ax(ax, title):
+        ax.set_title(title, fontsize=8)
+        n_rows = TOP_K * 2 + max(0, TOP_K - 1) * GAP_ROWS
+        ax.set_xticks(np.arange(-0.5, 4, 1), minor=True)
+        ax.set_yticks(np.arange(-0.5, n_rows, 1), minor=True)
+        ax.grid(which="minor", color="#444444", linewidth=0.8)
+        ax.tick_params(which="both", bottom=False, left=False, labelbottom=False, labelleft=False)
+
+    _setup_topk_win_ax(ax_topk_base_win, "Baseline windows")
+    _setup_topk_win_ax(ax_topk_fau_win,  "FAU windows")
+
+    # Initialise imshow images for the top-k window grids
+    topk_vals_b0, topk_idx_b0 = torch.topk(probs_base_t[0], k=TOP_K)
+    topk_win_rgb_b0, _ = build_topk_window_rgb(class_states[topk_idx_b0.numpy()])
+    im_topk_base_win = ax_topk_base_win.imshow(
+        topk_win_rgb_b0, aspect="auto", interpolation="nearest", origin="upper")
+
+    topk_vals_f0, topk_idx_f0 = torch.topk(probs_fau_t[0], k=TOP_K)
+    topk_win_rgb_f0, _ = build_topk_window_rgb(class_states[topk_idx_f0.numpy()])
+    im_topk_fau_win = ax_topk_fau_win.imshow(
+        topk_win_rgb_f0, aspect="auto", interpolation="nearest", origin="upper")
+
+    # Initialise bar widths and y-tick labels
+    for bar, val in zip(bars_base, topk_vals_b0.numpy() * 100):
+        bar.set_width(float(val))
+    ax_topk_base.set_yticks(np.arange(TOP_K))
+    ax_topk_base.set_yticklabels([str(int(ii)) for ii in topk_idx_b0.numpy()], fontsize=6)
+
+    for bar, val in zip(bars_fau, topk_vals_f0.numpy() * 100):
+        bar.set_width(float(val))
+    ax_topk_fau.set_yticks(np.arange(TOP_K))
+    ax_topk_fau.set_yticklabels([str(int(ii)) for ii in topk_idx_f0.numpy()], fontsize=6)
+
     # shared xlim init
     for ax in (ax_wav_a, ax_wav_b, ax_pnow, ax_pfut, ax_loss):
         ax.set_xlim(0, float(t_audio[-1]))
@@ -344,6 +458,30 @@ if __name__ == "__main__":
                 line.set_xdata([t, t])
             im_a.set_data(plt.imread(fa_paths[min(i, len(fa_paths) - 1)]))
             im_b.set_data(plt.imread(fb_paths[min(i, len(fb_paths) - 1)]))
+            # Update top-k bin panels at current cursor frame
+            fi = min(int(round(t * frame_hz)), n_frames - 1)
+
+            # GT: single-row 2×4 grid
+            gt_rgb, _ = build_topk_window_rgb(gt_bins_np[fi:fi+1])
+            im_gt_win.set_data(gt_rgb)
+
+            # Baseline top-k
+            topk_vals_b, topk_idx_b = torch.topk(probs_base_t[fi], k=TOP_K)
+            for bar, val in zip(bars_base, topk_vals_b.numpy() * 100):
+                bar.set_width(float(val))
+            ax_topk_base.set_yticks(np.arange(TOP_K))
+            ax_topk_base.set_yticklabels([str(int(ii)) for ii in topk_idx_b.numpy()], fontsize=6)
+            topk_win_rgb_b, _ = build_topk_window_rgb(class_states[topk_idx_b.numpy()])
+            im_topk_base_win.set_data(topk_win_rgb_b)
+
+            # FAU top-k
+            topk_vals_f, topk_idx_f = torch.topk(probs_fau_t[fi], k=TOP_K)
+            for bar, val in zip(bars_fau, topk_vals_f.numpy() * 100):
+                bar.set_width(float(val))
+            ax_topk_fau.set_yticks(np.arange(TOP_K))
+            ax_topk_fau.set_yticklabels([str(int(ii)) for ii in topk_idx_f.numpy()], fontsize=6)
+            topk_win_rgb_f, _ = build_topk_window_rgb(class_states[topk_idx_f.numpy()])
+            im_topk_fau_win.set_data(topk_win_rgb_f)
             fig.savefig(frames_dir / f"frame_{i:06d}.png", dpi=80)
             if i % 100 == 0:
                 print(f"  {i}/{total_frames}")
