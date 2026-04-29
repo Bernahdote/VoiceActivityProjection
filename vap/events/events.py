@@ -791,7 +791,6 @@ class TurnTakingEvents:
         ret.update(hs)
 
         # Sample equal amounts of "pre-hold" regions as "pre-shift"
-        # ret["pred_shift_neg"] = self.sample_pred_shift_negatives(ret)
         n_pred_shift_negs_to_sample = self.get_total_ranges(ret["pred_shift"])
         ret["pred_shift_neg"] = self.sample_equal_amounts(
             n_pred_shift_negs_to_sample, ret["pred_hold"], event_type="pred_shift"

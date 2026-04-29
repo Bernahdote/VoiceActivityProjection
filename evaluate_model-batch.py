@@ -1,11 +1,11 @@
 from __future__ import annotations
 
+import random
 from pathlib import Path
 from typing import Any
 
-import random
-
 import hydra
+import numpy as np
 import pandas as pd
 import torch
 from hydra.utils import instantiate, to_absolute_path
@@ -13,6 +13,9 @@ from omegaconf import DictConfig
 from tqdm import tqdm
 
 from vap.modules.lightning_module import VAPModule
+
+
+SP_N_SEEDS = 10  # number of seeds for shift-prediction metric
 
 
 def _split_test_csv(test_csv_path: Path) -> dict[str, Path]:
@@ -56,26 +59,17 @@ def _load_checkpoint(module: torch.nn.Module, checkpoint_path: Path) -> None:
             print(f"  unexpected: {k}")
 
 
-def _evaluate(
+def _run_inference(
     module: torch.nn.Module,
-    cfg: DictConfig,
-    csv_path: Path,
-    batch_size: int,
-    num_workers: int,
-) -> None:
-    cfg.datamodule.test_path = str(csv_path)
-    cfg.datamodule.batch_size = int(batch_size)
-    cfg.datamodule.num_workers = int(num_workers)
+    loader,
+) -> tuple[list[dict], float, float, float]:
+    """Run the model forward pass once and cache (probs, vad) per batch.
 
-    datamodule = instantiate(cfg.datamodule)
-    datamodule.prepare_data()
-    datamodule.setup("test")
-    loader = datamodule.test_dataloader()
-
-    metric = getattr(module, "val_metric", None)
-    if metric is not None:
-        metric.reset()
-
+    Returns:
+        cached   : list of {"probs": dict, "vad": Tensor} stored on CPU
+        total_examples, vap_loss_sum, va_loss_sum
+    """
+    cached: list[dict] = []
     total_examples = 0
     vap_loss_sum = 0.0
     va_loss_sum = 0.0
@@ -94,15 +88,58 @@ def _evaluate(
                 out["logits"], labels, reduction="mean"
             )
             va_loss = module.model.objective.loss_vad(out["vad"], batch["vad"])
-
-            if metric is not None:
-                probs = module.model.objective.get_probs(out["logits"])
-                metric.update_batch(probs, batch["vad"])
+            probs = module.model.objective.get_probs(out["logits"])
 
             bsz = int(batch["waveform"].shape[0])
             total_examples += bsz
             vap_loss_sum += float(vap_loss) * bsz
             va_loss_sum += float(va_loss) * bsz
+
+            # Move to CPU so GPU memory is freed between batches
+            cached.append({
+                "probs": {k: v.cpu() for k, v in probs.items()},
+                "vad": batch["vad"].cpu(),
+            })
+
+    return cached, total_examples, vap_loss_sum, va_loss_sum
+
+
+def _compute_scores(metric, cached: list[dict], seed: int | None = None) -> dict:
+    """Replay cached inference results through the metric.
+
+    If seed is given, Python's random state is fixed before each replay so
+    that the stochastic SP negative sampling is reproducible.
+    """
+    if seed is not None:
+        random.seed(seed)
+    metric.reset()
+    for r in cached:
+        metric.update_batch(r["probs"], r["vad"])
+    scores = metric.compute()
+    metric.reset()
+    return scores
+
+
+def _evaluate(
+    module: torch.nn.Module,
+    cfg: DictConfig,
+    csv_path: Path,
+    batch_size: int,
+    num_workers: int,
+) -> None:
+    cfg.datamodule.test_path = str(csv_path)
+    cfg.datamodule.batch_size = int(batch_size)
+    cfg.datamodule.num_workers = int(num_workers)
+
+    datamodule = instantiate(cfg.datamodule)
+    datamodule.prepare_data()
+    datamodule.setup("test")
+    loader = datamodule.test_dataloader()
+
+    metric = getattr(module, "val_metric", None)
+
+    # ── inference (model forward pass — done once) ────────────────────────────
+    cached, total_examples, vap_loss_sum, va_loss_sum = _run_inference(module, loader)
 
     print(f"\nloss_vap:   {vap_loss_sum / total_examples:.6f}")
     print(f"loss_vad:   {va_loss_sum / total_examples:.6f}")
@@ -112,12 +149,9 @@ def _evaluate(
         print("No metric configured.")
         return
 
-    for event_name in metric.EVENT_NAMES:
-        n = sum(len(t) for t in metric.preds[event_name])
-        print(f"  {event_name}: {n} samples")
-
-    scores = metric.compute()
-    metric.reset()
+    # ── deterministic metrics: HS and LS ─────────────────────────────────────
+    # equal_hold_shift=False → all holds used, no random sampling → one run suffices
+    scores_det = _compute_scores(metric, cached, seed=None)
 
     LABELS = {
         "hs": ("Hold",      "Shift"),
@@ -127,21 +161,39 @@ def _evaluate(
     }
 
     print()
-    for event_name, score in scores.items():
+    for event_name in ("hs", "ls", "bp"):
+        score = scores_det[event_name]
         acc0 = float(score["acc"][0])
         acc1 = float(score["acc"][1])
         bacc = (acc0 + acc1) / 2.0
         f1   = float(score["f1"])
-        lbl0, lbl1 = LABELS.get(event_name, ("acc0", "acc1"))
+        lbl0, lbl1 = LABELS[event_name]
         print(f"{event_name.upper()}:  {lbl0}={acc0:.4f}  {lbl1}={acc1:.4f}  bAcc={bacc:.4f}  F1={f1:.4f}")
+
+    # ── SP: stochastic negative sampling → run with seeds 1‥SP_N_SEEDS ───────
+    sp_baccs, sp_f1s = [], []
+    sp_acc0s, sp_acc1s = [], []
+    for seed in range(1, SP_N_SEEDS + 1):
+        s = _compute_scores(metric, cached, seed=seed)["sp"]
+        sp_acc0s.append(float(s["acc"][0]))
+        sp_acc1s.append(float(s["acc"][1]))
+        sp_baccs.append((sp_acc0s[-1] + sp_acc1s[-1]) / 2.0)
+        sp_f1s.append(float(s["f1"]))
+
+    lbl0, lbl1 = LABELS["sp"]
+    print(
+        f"SP:  {lbl0}={np.mean(sp_acc0s):.4f}±{np.std(sp_acc0s):.4f}"
+        f"  {lbl1}={np.mean(sp_acc1s):.4f}±{np.std(sp_acc1s):.4f}"
+        f"  bAcc={np.mean(sp_baccs):.4f}±{np.std(sp_baccs):.4f}"
+        f"  F1={np.mean(sp_f1s):.4f}±{np.std(sp_f1s):.4f}"
+        f"  (n={SP_N_SEEDS} seeds)"
+    )
 
 
 @hydra.main(version_base=None, config_path="vap/conf", config_name="evaluate")
 def main(cfg_eval: DictConfig) -> None:
     checkpoint_path = Path(to_absolute_path(str(cfg_eval.runtime.checkpoint_path)))
     test_csv_path = Path(to_absolute_path(str(cfg_eval.runtime.test_csv_path)))
-
-    random.seed(1)
 
     if not checkpoint_path.is_file():
         raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")

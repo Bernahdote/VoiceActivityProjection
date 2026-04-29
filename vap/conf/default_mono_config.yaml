@@ -52,7 +52,7 @@ module:
       metric_pad_time: 0.05
       max_time: 20
       frame_hz: 50
-      equal_hold_shift: True
+      equal_hold_shift: False
       prediction_region_time: 0.5
       # Shift/Hold
       sh_pre_cond_time: 1.0
