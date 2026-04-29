@@ -161,7 +161,7 @@ def _evaluate(
     }
 
     print()
-    for event_name in ("hs", "ls", "bp"):
+    for event_name in ("hs", "ls"):
         score = scores_det[event_name]
         acc0 = float(score["acc"][0])
         acc1 = float(score["acc"][1])
