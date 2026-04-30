@@ -5,6 +5,7 @@ from torchmetrics.functional import f1_score
 from typing import Mapping, Iterable, Iterable
 
 from vap.events.events import TurnTakingEvents, EventConfig
+from vap.zero_shot import ZeroShot
 
 
 BATCH = Mapping[str, torch.Tensor]
@@ -18,6 +19,7 @@ class VAPMetric:
         self.threshold = threshold
         self.event_config = event_config
         self.event_extractor = TurnTakingEvents(event_config)
+        self._zero_shot = ZeroShot()
         self.reset()
 
     def reset(self):
@@ -38,6 +40,7 @@ class VAPMetric:
         p_now: torch.Tensor,
         p_fut: torch.Tensor,
         events: EVENTS,
+        p_bc: torch.Tensor | None = None,
         device=None,
     ) -> Iterable[dict[str, Tensor]]:
         """
@@ -114,6 +117,20 @@ class VAPMetric:
                 # Negatives are zero -> short predictions
                 targets["ls"].append(torch.zeros_like(pshort))
 
+            ###########################################
+            # Backchannel prediction
+            ###########################################
+            if p_bc is not None:
+                for start, end, speaker in events["pred_backchannel"][b]:
+                    pred_bc = p_bc[b, start:end, speaker]
+                    preds["bp"].append(pred_bc)
+                    targets["bp"].append(torch.ones_like(pred_bc))
+
+                for start, end, speaker in events["pred_backchannel_neg"][b]:
+                    pred_bc = p_bc[b, start:end, speaker]
+                    preds["bp"].append(pred_bc)
+                    targets["bp"].append(torch.zeros_like(pred_bc))
+
         # cat/stack/flatten to single tensor
         device = device if device else p_now.device
         out_preds = {}
@@ -171,11 +188,16 @@ class VAPMetric:
             self.preds[event_name] += [preds[event_name]]
             self.targets[event_name] += [targets[event_name]]
 
+    def _compute_p_bc(self, full_probs: torch.Tensor) -> torch.Tensor:
+        self._zero_shot.bc_prediction = self._zero_shot.bc_prediction.to(full_probs.device)
+        return self._zero_shot.probs_backchannel(full_probs)
+
     @torch.no_grad()
     def update_batch(self, probs: dict[str, torch.Tensor], vad: torch.Tensor):
         events = self.event_extractor(vad)
+        p_bc = self._compute_p_bc(probs["probs"]) if "probs" in probs else None
         preds, targets = self.extract_prediction_and_targets(
-            p_now=probs["p_now"], p_fut=probs["p_future"], events=events
+            p_now=probs["p_now"], p_fut=probs["p_future"], events=events, p_bc=p_bc
         )
         self._update_metrics(preds, targets)
 
