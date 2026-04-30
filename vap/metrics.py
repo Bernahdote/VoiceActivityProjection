@@ -4,8 +4,16 @@ from torchmetrics.functional.classification.accuracy import accuracy
 from torchmetrics.functional import f1_score
 from typing import Mapping, Iterable, Iterable
 
+import importlib.util, os as _os
+_zs_spec = importlib.util.spec_from_file_location(
+    "_vap_metrics_zero_shot",
+    _os.path.join(_os.path.dirname(__file__), "metrics", "zero_shot.py"),
+)
+_zs_mod = importlib.util.module_from_spec(_zs_spec)
+_zs_spec.loader.exec_module(_zs_mod)
+ZeroShot = _zs_mod.ZeroShot
+
 from vap.events.events import TurnTakingEvents, EventConfig
-from vap.metrics.zero_shot import ZeroShot
 
 
 BATCH = Mapping[str, torch.Tensor]
