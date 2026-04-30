@@ -407,6 +407,9 @@ class VAPObjective(nn.Module):
         }
 
 
+ObjectiveVAP = VAPObjective  # backwards-compatibility alias for zero_shot.py
+
+
 if __name__ == "__main__":
     ob = ObjectiveVAP()
     print(ob)
