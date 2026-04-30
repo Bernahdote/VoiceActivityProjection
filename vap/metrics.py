@@ -5,7 +5,7 @@ from torchmetrics.functional import f1_score
 from typing import Mapping, Iterable, Iterable
 
 from vap.events.events import TurnTakingEvents, EventConfig
-from vap.zero_shot import ZeroShot
+from vap.metrics.zero_shot import ZeroShot
 
 
 BATCH = Mapping[str, torch.Tensor]
@@ -189,8 +189,10 @@ class VAPMetric:
             self.targets[event_name] += [targets[event_name]]
 
     def _compute_p_bc(self, full_probs: torch.Tensor) -> torch.Tensor:
-        self._zero_shot.bc_prediction = self._zero_shot.bc_prediction.to(full_probs.device)
-        return self._zero_shot.probs_backchannel(full_probs)
+        bc_idx = self._zero_shot.subsets["backchannel"].to(full_probs.device)
+        ap = full_probs[..., bc_idx[0]].sum(-1)
+        bp = full_probs[..., bc_idx[1]].sum(-1)
+        return torch.stack((ap, bp), dim=-1)
 
     @torch.no_grad()
     def update_batch(self, probs: dict[str, torch.Tensor], vad: torch.Tensor):
