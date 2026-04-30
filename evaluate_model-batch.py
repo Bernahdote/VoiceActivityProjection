@@ -160,6 +160,19 @@ def _evaluate(
         "bp": ("Non-BC",    "Backchannel"),
     }
 
+    # Rerun to get raw sample counts for sanity checking
+    metric.reset()
+    for r in cached:
+        metric.update_batch(r["probs"], r["vad"])
+    _, targets_flat = metric._flatten()
+    for event_name in ("hs", "ls"):
+        if event_name in targets_flat:
+            t = targets_flat[event_name]
+            n0 = int((t == 0).sum())
+            n1 = int((t == 1).sum())
+            print(f"  [{event_name}] n_class0={n0}  n_class1={n1}  total={n0+n1}")
+    metric.reset()
+
     print()
     for event_name in ("hs", "ls"):
         score = scores_det[event_name]
