@@ -27,7 +27,7 @@ EVENT_NAMES = [
     "long",
     "short",
     "pred_shift",
-    "pred_shift_neg",
+    "pred_hold",
     "pred_backchannel",
     "pred_backchannel_neg",
 ]
@@ -39,17 +39,21 @@ def collect_au_values(
     feat_b: torch.Tensor,
     au_idx: int,
     batch_size: int,
-    accumulator: dict[str, list],
+    acc_actor: dict[str, list],
+    acc_other: dict[str, list],
 ) -> None:
-    """For each event in the batch, collect AU values from the relevant speaker."""
+    """Collect AU values for both the event speaker and the other speaker."""
     for event_name in EVENT_NAMES:
-        if event_name not in events:
+        key = "pred_shift_neg" if event_name == "pred_hold" else event_name
+        if key not in events:
             continue
         for b in range(batch_size):
-            for start, end, speaker in events[event_name][b]:
-                feat = feat_a if speaker == 0 else feat_b
-                vals = feat[b, start:end, au_idx].cpu().numpy()
-                accumulator[event_name].append(vals)
+            for start, end, speaker in events[key][b]:
+                feats = [feat_a, feat_b]
+                actor_vals = feats[speaker][b, start:end, au_idx].cpu().numpy()
+                other_vals = feats[1 - speaker][b, start:end, au_idx].cpu().numpy()
+                acc_actor[event_name].append(actor_vals)
+                acc_other[event_name].append(other_vals)
 
 
 def main():
@@ -73,7 +77,8 @@ def main():
     loader = dm.test_dataloader()
 
     event_extractor = TurnTakingEvents(EventConfig())
-    accumulator: dict[str, list] = defaultdict(list)
+    acc_actor: dict[str, list] = defaultdict(list)
+    acc_other: dict[str, list] = defaultdict(list)
 
     with torch.no_grad():
         for batch in tqdm(loader, desc="Processing"):
@@ -83,19 +88,23 @@ def main():
             bsz = vad.shape[0]
 
             events = event_extractor(vad)
-            collect_au_values(events, feat_a, feat_b, args.au_idx, bsz, accumulator)
+            collect_au_values(events, feat_a, feat_b, args.au_idx, bsz, acc_actor, acc_other)
 
     print(f"\nAU index {args.au_idx}  |  features: fauv\n")
-    print(f"{'Event':<25}  {'N frames':>10}  {'Mean':>10}  {'Std':>10}")
-    print("-" * 60)
+    print(f"{'Event':<25}  {'Actor mean':>12}  {'Actor std':>10}  {'Other mean':>12}  {'Other std':>10}")
+    print("-" * 75)
     for event_name in EVENT_NAMES:
-        vals = accumulator[event_name]
-        if not vals:
-            print(f"{event_name:<25}  {'—':>10}  {'—':>10}  {'—':>10}")
+        a = acc_actor[event_name]
+        o = acc_other[event_name]
+        if not a:
+            print(f"{event_name:<25}  {'—':>12}  {'—':>10}  {'—':>12}  {'—':>10}")
             continue
-        all_vals = np.concatenate(vals)
+        av = np.concatenate(a)
+        ov = np.concatenate(o)
         print(
-            f"{event_name:<25}  {len(all_vals):>10}  {np.mean(all_vals):>10.4f}  {np.std(all_vals):>10.4f}"
+            f"{event_name:<25}"
+            f"  {np.mean(av):>12.4f}  {np.std(av):>10.4f}"
+            f"  {np.mean(ov):>12.4f}  {np.std(ov):>10.4f}"
         )
 
 
