@@ -183,15 +183,24 @@ def _evaluate(
         lbl0, lbl1 = LABELS[event_name]
         print(f"{event_name.upper()}:  {lbl0}={acc0:.4f}  {lbl1}={acc1:.4f}  bAcc={bacc:.4f}  F1={f1:.4f}")
 
-    # ── SP: stochastic negative sampling → run with seeds 1‥SP_N_SEEDS ───────
-    sp_baccs, sp_f1s = [], []
-    sp_acc0s, sp_acc1s = [], []
+    # ── SP and BP: stochastic negative sampling → run with seeds 1‥SP_N_SEEDS ─
+    sp_baccs, sp_f1s, sp_acc0s, sp_acc1s = [], [], [], []
+    bp_baccs, bp_f1s, bp_acc0s, bp_acc1s = [], [], [], []
     for seed in range(1, SP_N_SEEDS + 1):
-        s = _compute_scores(metric, cached, seed=seed)["sp"]
+        scores_seed = _compute_scores(metric, cached, seed=seed)
+
+        s = scores_seed["sp"]
         sp_acc0s.append(float(s["acc"][0]))
         sp_acc1s.append(float(s["acc"][1]))
         sp_baccs.append((sp_acc0s[-1] + sp_acc1s[-1]) / 2.0)
         sp_f1s.append(float(s["f1"]))
+
+        if "bp" in scores_seed:
+            b = scores_seed["bp"]
+            bp_acc0s.append(float(b["acc"][0]))
+            bp_acc1s.append(float(b["acc"][1]))
+            bp_baccs.append((bp_acc0s[-1] + bp_acc1s[-1]) / 2.0)
+            bp_f1s.append(float(b["f1"]))
 
     lbl0, lbl1 = LABELS["sp"]
     print(
@@ -201,6 +210,16 @@ def _evaluate(
         f"  F1={np.mean(sp_f1s):.4f}±{np.std(sp_f1s):.4f}"
         f"  (n={SP_N_SEEDS} seeds)"
     )
+
+    if bp_baccs:
+        lbl0, lbl1 = LABELS["bp"]
+        print(
+            f"BP:  {lbl0}={np.mean(bp_acc0s):.4f}±{np.std(bp_acc0s):.4f}"
+            f"  {lbl1}={np.mean(bp_acc1s):.4f}±{np.std(bp_acc1s):.4f}"
+            f"  bAcc={np.mean(bp_baccs):.4f}±{np.std(bp_baccs):.4f}"
+            f"  F1={np.mean(bp_f1s):.4f}±{np.std(bp_f1s):.4f}"
+            f"  (n={SP_N_SEEDS} seeds)"
+        )
 
 
 @hydra.main(version_base=None, config_path="vap/conf", config_name="evaluate")
