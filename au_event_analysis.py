@@ -91,15 +91,36 @@ def main():
             collect_au_values(events, feat_a, feat_b, bsz, acc_actor, acc_other, n_features)
 
     AU_NAMES = [
-        "AU1","AU2","AU4","AU5","AU6","AU7","AU9","AU10","AU12","AU13",
-        "AU14","AU15","AU16","AU17","AU18","AU20","AU22","AU23","AU24",
-        "AU25","AU26","AU28","AU30","AU43",
+        "InnerBrowRaiser",   # AU1
+        "OuterBrowRaiser",   # AU2
+        "BrowLowerer",       # AU4
+        "UpperLidRaiser",    # AU5
+        "CheekRaiser",       # AU6
+        "LidTightener",      # AU7
+        "NoseWrinkler",      # AU9
+        "UpperLipRaiser",    # AU10
+        "LipCornerPuller",   # AU12
+        "CheekPuffer",       # AU13
+        "Dimpler",           # AU14
+        "LipCornerDepressor",# AU15
+        "LowerLipDepressor", # AU16
+        "ChinRaiser",        # AU17
+        "LipPuckerer",       # AU18
+        "LipStretcher",      # AU20
+        "LipFunneler",       # AU22
+        "LipTightener",      # AU23
+        "LipPressor",        # AU24
+        "LipsParts",         # AU25
+        "JawDrop",           # AU26
+        "LipSuck",           # AU28
+        "JawSideways",       # AU30
+        "EyesClosed",        # AU43
     ]
 
     for event_name in EVENT_NAMES:
         print(f"\n=== {event_name} ===")
-        print(f"{'AU':<8}  {'Actor mean':>12}  {'Actor std':>10}  {'Other mean':>12}  {'Other std':>10}")
-        print("-" * 60)
+        print(f"{'AU':<22}  {'Actor mean':>12}  {'Actor std':>10}  {'Other mean':>12}  {'Other std':>10}")
+        print("-" * 74)
         for au_idx in range(n_features):
             a = acc_actor[event_name][au_idx]
             o = acc_other[event_name][au_idx]
@@ -108,7 +129,7 @@ def main():
             av = np.concatenate(a)
             ov = np.concatenate(o)
             print(
-                f"{AU_NAMES[au_idx]:<8}"
+                f"{AU_NAMES[au_idx]:<22}"
                 f"  {np.mean(av):>12.4f}  {np.std(av):>10.4f}"
                 f"  {np.mean(ov):>12.4f}  {np.std(ov):>10.4f}"
             )
