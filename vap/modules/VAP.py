@@ -13,7 +13,7 @@ from vap.utils.utils import (
     vad_omit_spikes,
 )
 
-from vap.modules.modules import ProjectionLayer
+from vap.modules.modules import ProjectionLayer, GPT, MultiHeadAttentionAlibi, GPT
 
 OUT = dict[str, Tensor]
 
@@ -198,15 +198,27 @@ class VAP(nn.Module):
         #     else nn.Identity()
         # )
 
-        in_dim = self.encoder.dim + self.video_dim # MLP projection instead of Linear projection 
         self.feature_projection = nn.Sequential(
-            nn.LayerNorm(in_dim),
-            nn.Linear(in_dim, self.dim * 2),
+            nn.LayerNorm(self.encoder.dim),
+            nn.Linear(self.encoder.dim, self.dim * 2),
             nn.GELU(),
             nn.Dropout(0.1),
             nn.Linear(self.dim * 2, self.dim),
             nn.Dropout(0.1),
         )
+
+        if self.video_dim > 0:
+            self.video_projection = nn.Sequential(
+                nn.LayerNorm(self.video_dim),
+                nn.Linear(self.video_dim, self.dim),
+            )
+            self.video_self_attention = GPT(
+                dim=self.dim, dff_k=3, num_layers=1, num_heads=4, dropout=0.1,
+            )
+            self.av_cross_ln = nn.LayerNorm(self.dim)
+            self.av_cross_attn = MultiHeadAttentionAlibi(
+                dim=self.dim, num_heads=4, dropout=0.1,
+            )
 
         # Outputs
         # Voice activity objective -> x1, x2 -> logits ->  BCE
@@ -254,16 +266,26 @@ class VAP(nn.Module):
         attention: bool = False,
     ) -> OUT:
         x1, x2 = self.encode_audio(waveform)
+        x1 = self.feature_projection(x1)
+        x2 = self.feature_projection(x2)
+
+        # 1. Audio self-attention (per speaker)
+        x1 = self.transformer.ar_channel(x1)["x"]
+        x2 = self.transformer.ar_channel(x2)["x"]
+
+        # 2-3. Video self-attention + audio-video cross-attention
         if self.video_dim > 0:
             if video_features_a is None or video_features_b is None:
                 raise ValueError(
                     "video_features_a and video_features_b must be provided when video_dim > 0."
                 )
-            x1 = torch.cat((x1, video_features_a), dim=-1)
-            x2 = torch.cat((x2, video_features_b), dim=-1)
-        x1 = self.feature_projection(x1)
-        x2 = self.feature_projection(x2)
-        out = self.transformer(x1, x2, attention=attention)
+            v1 = self.video_self_attention(self.video_projection(video_features_a))["x"]
+            v2 = self.video_self_attention(self.video_projection(video_features_b))["x"]
+            x1 = x1 + self.av_cross_attn(Q=self.av_cross_ln(x1), K=v1, V=v1)[0]
+            x2 = x2 + self.av_cross_attn(Q=self.av_cross_ln(x2), K=v2, V=v2)[0]
+
+        # 4. Inter-speaker cross-attention
+        out = self.transformer.ar(x1, x2, attention=attention)
         logits, vad = self.head(out["x"], out["x1"], out["x2"])
         out["logits"] = logits
         out["vad"] = vad

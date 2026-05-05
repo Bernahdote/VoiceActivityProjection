@@ -3,7 +3,7 @@ from torch import Tensor
 from torch.utils.data import Dataset, DataLoader
 import lightning as L
 
-from os.path import isfile
+from os.path import isfile, isdir
 import pandas as pd
 import json
 from typing import Optional, Mapping, Any
@@ -305,15 +305,15 @@ class VAPDataModule(L.LightningDataModule):
 
     def prepare_data(self):
         if self.train_path is not None:
-            if not isfile(self.train_path):
+            if not isfile(self.train_path) and not isdir(self.train_path):
                 print("WARNING: no TRAINING data found: ", self.train_path)
 
         if self.val_path is not None:
-            if not isfile(self.val_path):
+            if not isfile(self.val_path) and not isdir(self.val_path):
                 print("WARNING: no VALIDATION data found: ", self.val_path)
 
         if self.test_path is not None:
-            if not isfile(self.test_path):
+            if not isfile(self.test_path) and not isdir(self.test_path):
                 print("WARNING: no TEST data found: ", self.test_path)
 
     def setup(self, stage: Optional[str] = "fit"):
