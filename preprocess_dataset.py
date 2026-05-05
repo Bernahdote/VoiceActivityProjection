@@ -28,6 +28,16 @@ from vap.utils.audio import load_waveform
 from vap.utils.utils import vad_list_to_onehot
 
 
+def compute_delta_features(feats: torch.Tensor) -> torch.Tensor:
+    """Delta = current frame - mean of 3 previous frames. Zero-padded for first 3 frames."""
+    avg = torch.zeros_like(feats)
+    for t in range(3, feats.shape[0]):
+        avg[t] = feats[t - 3:t].mean(dim=0)
+    delta = feats - avg
+    delta[:3] = 0.0
+    return delta
+
+
 def select_video_features(feats: torch.Tensor, groups: list[str]) -> torch.Tensor:
     if groups == ["all"]:
         return feats
@@ -104,6 +114,9 @@ def preprocess_sample(
     fb = torch.nn.functional.interpolate(
         fb.T.unsqueeze(0), size=target_len, mode="linear", align_corners=False
     ).squeeze(0).T
+
+    fa = torch.cat([fa, compute_delta_features(fa)], dim=-1)
+    fb = torch.cat([fb, compute_delta_features(fb)], dim=-1)
 
     vad = vad_list_to_onehot(
         row["vad_list"], duration=dur + horizon, frame_hz=frame_hz

@@ -23,7 +23,7 @@ module:
     _target_: vap.modules.VAP.VAP
     bin_times: [0.2, 0.4, 0.6, 0.8]
     frame_hz: 50
-    video_dim: 185
+    video_dim: 370
     encoder:
       _target_: vap.modules.encoder.EncoderCPC
       load_pretrained: true 
