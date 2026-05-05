@@ -215,6 +215,10 @@ class VAP(nn.Module):
             self.video_self_attention = GPT(
                 dim=self.dim, dff_k=3, num_layers=1, num_heads=4, dropout=0.1,
             )
+            self.va_cross_ln = nn.LayerNorm(self.dim)
+            self.va_cross_attn = MultiHeadAttentionAlibi(
+                dim=self.dim, num_heads=4, dropout=0.1,
+            )
             self.av_cross_ln = nn.LayerNorm(self.dim)
             self.av_cross_attn = MultiHeadAttentionAlibi(
                 dim=self.dim, num_heads=4, dropout=0.1,
@@ -281,6 +285,10 @@ class VAP(nn.Module):
                 )
             v1 = self.video_self_attention(self.video_projection(video_features_a))["x"]
             v2 = self.video_self_attention(self.video_projection(video_features_b))["x"]
+            # Step 1: video attends to audio → enriched video
+            v1 = v1 + self.va_cross_attn(Q=self.va_cross_ln(v1), K=x1, V=x1)[0]
+            v2 = v2 + self.va_cross_attn(Q=self.va_cross_ln(v2), K=x2, V=x2)[0]
+            # Step 2: audio attends to enriched video
             x1 = x1 + self.av_cross_attn(Q=self.av_cross_ln(x1), K=v1, V=v1)[0]
             x2 = x2 + self.av_cross_attn(Q=self.av_cross_ln(x2), K=v2, V=v2)[0]
 
