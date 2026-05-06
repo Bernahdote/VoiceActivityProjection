@@ -16,6 +16,7 @@ import argparse
 from pathlib import Path
 
 import torch
+import torch.nn.functional as F
 import numpy as np
 from tqdm import tqdm
 
@@ -28,13 +29,15 @@ from vap.utils.audio import load_waveform
 from vap.utils.utils import vad_list_to_onehot
 
 
-def compute_delta_features(feats: torch.Tensor) -> torch.Tensor:
-    """Delta = current frame - mean of 3 previous frames. Zero-padded for first 3 frames."""
-    avg = torch.zeros_like(feats)
-    for t in range(3, feats.shape[0]):
-        avg[t] = feats[t - 3:t].mean(dim=0)
+def compute_delta_features(feats: torch.Tensor, window: int = 10) -> torch.Tensor:
+    """Delta = current frame - mean of previous `window` frames. Zero-padded for first frames."""
+    x = feats.T.unsqueeze(0)                          # (1, C, T)
+    kernel = torch.ones(1, 1, window, device=feats.device) / window
+    avg = F.conv1d(F.pad(x, (window, 0)), kernel.expand(x.shape[1], -1, -1), groups=x.shape[1])
+    avg = avg[..., :-1]                                # shift: use frames [t-window, t-1], not [t-window+1, t]
+    avg = avg.squeeze(0).T                             # (T, C)
     delta = feats - avg
-    delta[:3] = 0.0
+    delta[:window] = 0.0
     return delta
 
 
