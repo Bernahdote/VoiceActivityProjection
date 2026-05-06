@@ -215,10 +215,12 @@ class VAP(nn.Module):
             self.video_self_attention = GPT(
                 dim=self.dim, dff_k=3, num_layers=1, num_heads=4, dropout=0.1,
             )
-            self.va_cross_ln = nn.LayerNorm(self.dim)
-            self.va_cross_attn = MultiHeadAttentionAlibi(
+            # Inter-speaker video cross-attention (v1 ↔ v2)
+            self.vv_cross_ln = nn.LayerNorm(self.dim)
+            self.vv_cross_attn = MultiHeadAttentionAlibi(
                 dim=self.dim, num_heads=4, dropout=0.1,
             )
+            # Audio attends to enriched video (fusion)
             self.av_cross_ln = nn.LayerNorm(self.dim)
             self.av_cross_attn = MultiHeadAttentionAlibi(
                 dim=self.dim, num_heads=4, dropout=0.1,
@@ -277,7 +279,7 @@ class VAP(nn.Module):
         x1 = self.transformer.ar_channel(x1)["x"]
         x2 = self.transformer.ar_channel(x2)["x"]
 
-        # 2-3. Video self-attention + audio-video cross-attention
+        # 2. Video self-attention + inter-speaker video cross-attention
         if self.video_dim > 0:
             if video_features_a is None or video_features_b is None:
                 raise ValueError(
@@ -285,15 +287,21 @@ class VAP(nn.Module):
                 )
             v1 = self.video_self_attention(self.video_projection(video_features_a))["x"]
             v2 = self.video_self_attention(self.video_projection(video_features_b))["x"]
-            # Step 1: video attends to audio → enriched video
-            v1 = v1 + self.va_cross_attn(Q=self.va_cross_ln(v1), K=x1, V=x1)[0]
-            v2 = v2 + self.va_cross_attn(Q=self.va_cross_ln(v2), K=x2, V=x2)[0]
-            # Step 2: audio attends to enriched video
-            x1 = x1 + self.av_cross_attn(Q=self.av_cross_ln(x1), K=v1, V=v1)[0]
-            x2 = x2 + self.av_cross_attn(Q=self.av_cross_ln(x2), K=v2, V=v2)[0]
+            # Inter-speaker video cross-attention (v1 ↔ v2), computed in parallel
+            dv1 = self.vv_cross_attn(Q=self.vv_cross_ln(v1), K=v2, V=v2)[0]
+            dv2 = self.vv_cross_attn(Q=self.vv_cross_ln(v2), K=v1, V=v1)[0]
+            v1 = v1 + dv1
+            v2 = v2 + dv2
 
-        # 4. Inter-speaker cross-attention
+        # 3. Inter-speaker audio cross-attention
         out = self.transformer.ar(x1, x2, attention=attention)
+
+        # 4. Audio attends to enriched video (late fusion), re-run combinator for logits
+        if self.video_dim > 0:
+            x1 = out["x1"] + self.av_cross_attn(Q=self.av_cross_ln(out["x1"]), K=v1, V=v1)[0]
+            x2 = out["x2"] + self.av_cross_attn(Q=self.av_cross_ln(out["x2"]), K=v2, V=v2)[0]
+            out["x1"], out["x2"] = x1, x2
+            out["x"] = self.transformer.ar.combinator(x1, x2)
         logits, vad = self.head(out["x"], out["x1"], out["x2"])
         out["logits"] = logits
         out["vad"] = vad
