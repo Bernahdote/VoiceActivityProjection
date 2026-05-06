@@ -1,7 +1,7 @@
 datamodule:
   _target_: vap.data.datamodule.VAPDataModule
-  train_path: data/splits/dev/dev_train_slide.csvE
-  val_path: data/splits/dev/dev_val_slide.csv
+  train_path: /mnt/sdb/willem/datasets/preprocessed/train_10
+  val_path: /mnt/sdb/willem/datasets/preprocessed/val_10
   test_path: null
   horizon: 2
   sample_rate: 16000
