@@ -1,7 +1,7 @@
 """
-Layout per column:
+Layout: single column (left person only)
   [ Video ]
-  [ Own gaze (yaw + pitch) ]
+  [ Gaze (yaw + pitch) ]
 
 Usage:
     uv run plot_gaze_video.py
@@ -27,11 +27,10 @@ SRC_FPS    = 30.0
 COL_W  = 960
 VID_H  = 540
 PLOT_H = 300
-OUT_W  = COL_W * 2
+OUT_W  = COL_W
 OUT_H  = VID_H + PLOT_H
 
 BASE_A = Path("/Users/willemberner/datasets/seamless_interaction/improvised/dev/0000/0038/V00_S2020_I00000686_P1275A")
-BASE_B = Path("/Users/willemberner/datasets/seamless_interaction/improvised/dev/0000/0032/V00_S2020_I00000686_P1276A")
 
 
 def fig_to_numpy(fig: plt.Figure) -> np.ndarray:
@@ -42,15 +41,15 @@ def fig_to_numpy(fig: plt.Figure) -> np.ndarray:
     return cv2.cvtColor(buf[:, :, :3], cv2.COLOR_RGB2BGR)
 
 
-def render_gaze_plot(ax, fig, t_win, yaw, pitch, t_now, gaze_min, gaze_max, label):
+def render_gaze_plot(ax, fig, t_win, yaw, pitch, t_now, gaze_min, gaze_max, label, half_win_sec):
     ax.cla()
-    ax.plot(t_win, yaw,   color="steelblue",  label="Yaw (left-right)", linewidth=1.5)
-    ax.plot(t_win, pitch, color="darkorange", label="Pitch (up-down)",  linewidth=1.5)
+    ax.plot(t_win, pitch, color="steelblue",  label="Pitch", linewidth=1.5)
+    ax.plot(t_win, yaw,   color="darkorange", label="Yaw",   linewidth=1.5)
     ax.axvline(x=t_now, color="red", linewidth=1.5, linestyle="--")
-    ax.set_xlim(t_win[0], t_win[-1])
+    ax.set_xlim(t_now - half_win_sec, t_now + half_win_sec)
     ax.set_ylim(gaze_min, gaze_max)
     ax.set_xlabel("Time (s)")
-    ax.set_ylabel("Gaze (°)")
+    ax.set_ylabel("Value")
     ax.legend(loc="upper right", fontsize=8)
     ax.set_title(label, fontsize=9)
     fig.tight_layout()
@@ -78,12 +77,9 @@ def main():
     args = parser.parse_args()
 
     z_a    = np.load(BASE_A.with_suffix(".f.npz"), allow_pickle=False)
-    z_b    = np.load(BASE_B.with_suffix(".f.npz"), allow_pickle=False)
     gaze_a = np.degrees(z_a["features"][:, GAZE_SLICE])
-    gaze_b = np.degrees(z_b["features"][:, GAZE_SLICE])
 
     cap_a   = cv2.VideoCapture(str(BASE_A.with_suffix(".mp4")))
-    cap_b   = cv2.VideoCapture(str(BASE_B.with_suffix(".mp4")))
     vid_fps = cap_a.get(cv2.CAP_PROP_FPS)
 
     start_frame = int(args.start * vid_fps)
@@ -91,43 +87,33 @@ def main():
     half_window = int(args.window * SRC_FPS / 2)
 
     cap_a.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
-    cap_b.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
 
-    gaze_min = min(gaze_a.min(), gaze_b.min()) - 1.0
-    gaze_max = max(gaze_a.max(), gaze_b.max()) + 1.0
+    gaze_min = float(gaze_a.min()) - 1.0
+    gaze_max = float(gaze_a.max()) + 1.0
 
     out_path = Path("gaze_video_tmp.mp4")
     out = cv2.VideoWriter(str(out_path), cv2.VideoWriter_fourcc(*"mp4v"), vid_fps, (OUT_W, OUT_H))
 
     fig_a, ax_a = plt.subplots(figsize=(COL_W / 100, PLOT_H / 100), dpi=100)
-    fig_b, ax_b = plt.subplots(figsize=(COL_W / 100, PLOT_H / 100), dpi=100)
 
     for frame_idx in trange(start_frame, end_frame, desc="Writing"):
         ok_a, frame_a = cap_a.read()
-        ok_b, frame_b = cap_b.read()
-        if not ok_a or not ok_b:
+        if not ok_a:
             break
 
         t_now    = frame_idx / vid_fps
         feat_idx = int(t_now * SRC_FPS)
         i0   = max(0, feat_idx - half_window)
         i1_a = min(len(gaze_a), feat_idx + half_window)
-        i1_b = min(len(gaze_b), feat_idx + half_window)
         t_win_a = np.arange(i0, i1_a) / SRC_FPS
-        t_win_b = np.arange(i0, i1_b) / SRC_FPS
 
-        p_a = render_gaze_plot(ax_a, fig_a, t_win_a, gaze_a[i0:i1_a, 0], gaze_a[i0:i1_a, 1], t_now, gaze_min, gaze_max, "A: gaze")
-        p_b = render_gaze_plot(ax_b, fig_b, t_win_b, gaze_b[i0:i1_b, 0], gaze_b[i0:i1_b, 1], t_now, gaze_min, gaze_max, "B: gaze")
+        p_a = render_gaze_plot(ax_a, fig_a, t_win_a, gaze_a[i0:i1_a, 0], gaze_a[i0:i1_a, 1], t_now, gaze_min, gaze_max, "gaze_encodings", args.window / 2)
 
-        col_a = np.concatenate([fit_frame(frame_a), p_a], axis=0)
-        col_b = np.concatenate([fit_frame(frame_b), p_b], axis=0)
-        out.write(np.concatenate([col_a, col_b], axis=1))
+        out.write(np.concatenate([fit_frame(frame_a), p_a], axis=0))
 
     cap_a.release()
-    cap_b.release()
     out.release()
-    for f in [fig_a, fig_b]:
-        plt.close(f)
+    plt.close(fig_a)
 
     final = Path("gaze_video.mp4")
     subprocess.run([
@@ -135,10 +121,7 @@ def main():
         "-i", str(out_path),
         "-ss", str(args.start), "-to", str(args.end),
         "-i", str(BASE_A.with_suffix(".wav")),
-        "-ss", str(args.start), "-to", str(args.end),
-        "-i", str(BASE_B.with_suffix(".wav")),
-        "-filter_complex", "amix=inputs=2:duration=shortest",
-        "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
+        "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-shortest",
         str(final),
     ], check=True)
     out_path.unlink()
