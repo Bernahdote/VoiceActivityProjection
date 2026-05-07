@@ -229,6 +229,8 @@ class VAP(nn.Module):
             self.av_cross_attn = MultiHeadAttentionAlibi(
                 dim=self.dim, num_heads=4, dropout=0.1,
             )
+            # Fusion gate (256-dim, audio-conditioned)
+            self.fusion_gate = nn.Linear(self.dim, self.dim)
 
         # Outputs
         # Voice activity objective -> x1, x2 -> logits ->  BCE
@@ -294,9 +296,11 @@ class VAP(nn.Module):
             # Step 1: video attends to audio → enriched video
             v1 = v1 + self.va_cross_attn(Q=self.va_cross_ln(v1), K=x1, V=x1)[0]
             v2 = v2 + self.va_cross_attn(Q=self.va_cross_ln(v2), K=x2, V=x2)[0]
-            # Step 2: audio attends to enriched video
-            x1 = x1 + self.av_cross_attn(Q=self.av_cross_ln(x1), K=v1, V=v1)[0]
-            x2 = x2 + self.av_cross_attn(Q=self.av_cross_ln(x2), K=v2, V=v2)[0]
+            # Step 2: audio attends to enriched video (gated)
+            av1 = self.av_cross_attn(Q=self.av_cross_ln(x1), K=v1, V=v1)[0]
+            av2 = self.av_cross_attn(Q=self.av_cross_ln(x2), K=v2, V=v2)[0]
+            x1 = x1 + torch.sigmoid(self.fusion_gate(x1)) * av1
+            x2 = x2 + torch.sigmoid(self.fusion_gate(x2)) * av2
 
         # 3. Inter-speaker cross-attention
         out = self.transformer.ar(x1, x2, attention=attention)
