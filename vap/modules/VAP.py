@@ -210,7 +210,11 @@ class VAP(nn.Module):
         if self.video_dim > 0:
             self.video_projection = nn.Sequential(
                 nn.LayerNorm(self.video_dim),
-                nn.Linear(self.video_dim, self.dim),
+                nn.Linear(self.video_dim, self.dim * 2),
+                nn.GELU(),
+                nn.Dropout(0.1),
+                nn.Linear(self.dim * 2, self.dim),
+                nn.Dropout(0.1),
             )
             self.video_self_attention = GPT(
                 dim=self.dim, dff_k=3, num_layers=1, num_heads=4, dropout=0.1,
@@ -224,10 +228,6 @@ class VAP(nn.Module):
             self.av_cross_ln = nn.LayerNorm(self.dim)
             self.av_cross_attn = MultiHeadAttentionAlibi(
                 dim=self.dim, num_heads=4, dropout=0.1,
-            )
-            # Audio self-attention after fusion to consolidate video-enriched representations
-            self.post_fusion_self_attn = GPT(
-                dim=self.dim, dff_k=3, num_layers=1, num_heads=4, dropout=0.1,
             )
 
         # Outputs
@@ -297,9 +297,6 @@ class VAP(nn.Module):
             # Step 2: audio attends to enriched video
             x1 = x1 + self.av_cross_attn(Q=self.av_cross_ln(x1), K=v1, V=v1)[0]
             x2 = x2 + self.av_cross_attn(Q=self.av_cross_ln(x2), K=v2, V=v2)[0]
-            # Step 3: audio self-attention to consolidate video-enriched representations
-            x1 = self.post_fusion_self_attn(x1)["x"]
-            x2 = self.post_fusion_self_attn(x2)["x"]
 
         # 3. Inter-speaker cross-attention
         out = self.transformer.ar(x1, x2, attention=attention)
