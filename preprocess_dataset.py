@@ -29,7 +29,7 @@ from vap.utils.audio import load_waveform
 from vap.utils.utils import vad_list_to_onehot
 
 
-def compute_delta_features(feats: torch.Tensor, window: int = 10) -> torch.Tensor:
+def compute_delta_features(feats: torch.Tensor, window: int = 20) -> torch.Tensor:
     """Delta = current frame - mean of previous `window` frames. Zero-padded for first frames."""
     x = feats.T.unsqueeze(0)                          # (1, C, T)
     kernel = torch.ones(1, 1, window, device=feats.device) / window
