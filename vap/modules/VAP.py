@@ -212,11 +212,7 @@ class VAP(nn.Module):
             self.video_gate = nn.Linear(self.dim, self.video_dim)
             self.video_projection = nn.Sequential(
                 nn.LayerNorm(self.video_dim),
-                nn.Linear(self.video_dim, self.dim * 2),
-                nn.GELU(),
-                nn.Dropout(0.1),
-                nn.Linear(self.dim * 2, self.dim),
-                nn.Dropout(0.1),
+                nn.Linear(self.video_dim, self.dim),
             )
             self.video_self_attention = GPT(
                 dim=self.dim, dff_k=3, num_layers=1, num_heads=4, dropout=0.1,
