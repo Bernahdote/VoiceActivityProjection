@@ -150,6 +150,7 @@ def main():
         default=["body_pose", "left_hand_pose", "right_hand_pose", "head", "gaze", "alignment_head_rotation", "fauv"],
     )
     parser.add_argument("--delta_window", type=int, default=20, help="Delta feature window in frames. Set to 0 to disable delta features.")
+    parser.add_argument("--retry_missing", action="store_true", help="Skip indices that already have a valid .pt file.")
     args = parser.parse_args()
 
     df = load_df(args.csv)
@@ -158,6 +159,9 @@ def main():
 
     errors = []
     for idx in tqdm(range(len(df)), desc=f"Preprocessing -> {args.output_dir}"):
+        out_path = output_dir / f"{idx:06d}.pt"
+        if args.retry_missing and out_path.exists():
+            continue
         row = df.iloc[idx]
         try:
             sample = preprocess_sample(
@@ -168,7 +172,7 @@ def main():
                 video_feature_groups=args.video_feature_groups,
                 delta_window=args.delta_window,
             )
-            torch.save(sample, output_dir / f"{idx:06d}.pt")
+            torch.save(sample, out_path)
         except Exception as e:
             errors.append((idx, str(e)))
             print(f"Error at index {idx}: {e}")
