@@ -54,6 +54,7 @@ def preprocess_sample(
     frame_hz: int,
     horizon: float,
     video_feature_groups: list[str],
+    delta_window: int = 20,
 ) -> dict:
     dur = round(row["end"] - row["start"])
     n_samples = int(dur * sample_rate)
@@ -118,8 +119,9 @@ def preprocess_sample(
         fb.T.unsqueeze(0), size=target_len, mode="linear", align_corners=False
     ).squeeze(0).T
 
-    fa = torch.cat([fa, compute_delta_features(fa)], dim=-1)
-    fb = torch.cat([fb, compute_delta_features(fb)], dim=-1)
+    if delta_window > 0:
+        fa = torch.cat([fa, compute_delta_features(fa, window=delta_window)], dim=-1)
+        fb = torch.cat([fb, compute_delta_features(fb, window=delta_window)], dim=-1)
 
     vad = vad_list_to_onehot(
         row["vad_list"], duration=dur + horizon, frame_hz=frame_hz
@@ -147,6 +149,7 @@ def main():
         nargs="+",
         default=["body_pose", "left_hand_pose", "right_hand_pose", "head", "gaze", "alignment_head_rotation", "fauv"],
     )
+    parser.add_argument("--delta_window", type=int, default=20, help="Delta feature window in frames. Set to 0 to disable delta features.")
     args = parser.parse_args()
 
     df = load_df(args.csv)
@@ -163,6 +166,7 @@ def main():
                 frame_hz=args.frame_hz,
                 horizon=args.horizon,
                 video_feature_groups=args.video_feature_groups,
+                delta_window=args.delta_window,
             )
             torch.save(sample, output_dir / f"{idx:06d}.pt")
         except Exception as e:

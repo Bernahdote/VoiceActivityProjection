@@ -243,8 +243,7 @@ def main(cfg_eval: DictConfig) -> None:
         # Current branch replaced it with an MLP whose weights are absent from the checkpoint
         # and would be randomly initialized. Reset to Identity to match training.
         module.model.feature_projection = torch.nn.Identity()
-    if "val_metric" in cfg.module:
-        module.val_metric = instantiate(cfg.module.val_metric)
+    module.val_metric = instantiate(cfg.module.val_metric)
 
     device_opt = str(cfg_eval.runtime.device).lower()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu") if device_opt == "auto" else torch.device(device_opt)
