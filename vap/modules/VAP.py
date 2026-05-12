@@ -208,19 +208,15 @@ class VAP(nn.Module):
         )
 
         if self.video_dim > 0:
-            # Audio-conditioned gate on raw video features (370-dim, interpretable)
-            self.video_gate = nn.Linear(self.dim, self.video_dim)
             self.video_projection = nn.Sequential(
                 nn.LayerNorm(self.video_dim),
-                nn.Linear(self.video_dim, self.dim * 2),
-                nn.GELU(),
-                nn.Dropout(0.1),
-                nn.Linear(self.dim * 2, self.dim),
-                nn.Dropout(0.1),
+                nn.Linear(self.video_dim, self.dim),
             )
             self.video_self_attention = GPT(
                 dim=self.dim, dff_k=3, num_layers=1, num_heads=4, dropout=0.1,
             )
+            # Audio-conditioned gate on video self-attention output (before cross-attention)
+            self.video_gate = nn.Linear(self.dim, self.dim)
             # Video attends to audio → enriched video
             self.va_cross_ln = nn.LayerNorm(self.dim)
             self.va_cross_attn = MultiHeadAttentionAlibi(
@@ -291,10 +287,11 @@ class VAP(nn.Module):
                 raise ValueError(
                     "video_features_a and video_features_b must be provided when video_dim > 0."
                 )
-            g1 = torch.sigmoid(self.video_gate(x1))
-            g2 = torch.sigmoid(self.video_gate(x2))
-            v1 = self.video_self_attention(self.video_projection(g1 * video_features_a))["x"]
-            v2 = self.video_self_attention(self.video_projection(g2 * video_features_b))["x"]
+            v1 = self.video_self_attention(self.video_projection(video_features_a))["x"]
+            v2 = self.video_self_attention(self.video_projection(video_features_b))["x"]
+            # Gate on video self-attention output (audio-conditioned, before cross-attention)
+            v1 = torch.sigmoid(self.video_gate(x1)) * v1
+            v2 = torch.sigmoid(self.video_gate(x2)) * v2
             # Step 1: video attends to audio → enriched video
             v1 = v1 + self.va_cross_attn(Q=self.va_cross_ln(v1), K=x1, V=x1)[0]
             v2 = v2 + self.va_cross_attn(Q=self.va_cross_ln(v2), K=x2, V=x2)[0]
