@@ -147,7 +147,7 @@ def main():
     parser.add_argument(
         "--video_feature_groups",
         nargs="+",
-        default=["body_pose", "left_hand_pose", "right_hand_pose", "head", "gaze", "alignment_head_rotation", "fauv"],
+        default=["body_pose", "left_hand_pose", "right_hand_pose", "head", "gaze", "fauv"],
     )
     parser.add_argument("--delta_window", type=int, default=20, help="Delta feature window in frames. Set to 0 to disable delta features.")
     parser.add_argument("--retry_missing", action="store_true", help="Skip indices that already have a valid .pt file.")
