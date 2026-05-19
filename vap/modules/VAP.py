@@ -222,14 +222,8 @@ class VAP(nn.Module):
             self.video_gates = nn.ModuleList([
                 nn.Linear(self.dim, self.dim) for _ in range(self.n_fusion_points)
             ])
-            # Video attends to audio → enriched video (per fusion point)
-            self.va_cross_lns = nn.ModuleList([
-                nn.LayerNorm(self.dim) for _ in range(self.n_fusion_points)
-            ])
-            self.va_cross_attns = nn.ModuleList([
-                MultiHeadAttentionAlibi(dim=self.dim, num_heads=4, dropout=0.1)
-                for _ in range(self.n_fusion_points)
-            ])
+    
+           
             # Audio attends to enriched video (per fusion point)
             self.av_cross_lns = nn.ModuleList([
                 nn.LayerNorm(self.dim) for _ in range(self.n_fusion_points)
@@ -285,17 +279,26 @@ class VAP(nn.Module):
         v2: Tensor,
         i: int,
     ) -> tuple[Tensor, Tensor]:
-        """Bidirectional audio-video fusion at fusion point ``i`` (with early gate)."""
-        # Early gate: audio conditions video before cross-attention
-        gv1 = torch.sigmoid(self.video_gates[i](x1)) * v1
-        gv2 = torch.sigmoid(self.video_gates[i](x2)) * v2
-        # Video attends to audio → enriched video
-        gv1 = gv1 + self.va_cross_attns[i](Q=self.va_cross_lns[i](gv1), K=x1, V=x1)[0]
-        gv2 = gv2 + self.va_cross_attns[i](Q=self.va_cross_lns[i](gv2), K=x2, V=x2)[0]
-        # Audio attends to enriched video
-        x1 = x1 + self.av_cross_attns[i](Q=self.av_cross_lns[i](x1), K=gv1, V=gv1)[0]
-        x2 = x2 + self.av_cross_attns[i](Q=self.av_cross_lns[i](x2), K=gv2, V=gv2)[0]
-        return x1, x2
+        """One-way audio-video fusion: audio attends to video."""
+
+    # Gate video using audio state
+    gv1 = torch.sigmoid(self.video_gates[i](x1)) * v1
+    gv2 = torch.sigmoid(self.video_gates[i](x2)) * v2
+
+    # Audio attends to video
+    x1 = x1 + self.av_cross_attns[i](
+        Q=self.av_cross_lns[i](x1),
+        K=gv1,
+        V=gv1,
+    )[0]
+
+    x2 = x2 + self.av_cross_attns[i](
+        Q=self.av_cross_lns[i](x2),
+        K=gv2,
+        V=gv2,
+    )[0]
+
+    return x1, x2
 
     def forward(
         self,
