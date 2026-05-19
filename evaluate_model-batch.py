@@ -122,6 +122,7 @@ def _evaluate(
 
     # HS and LS: deterministic
     scores_det = _replay()
+    print(f"[debug] available metric keys: {list(scores_det.keys())}")
     print()
     for event_name in ("hs", "ls"):
         if event_name not in scores_det:
