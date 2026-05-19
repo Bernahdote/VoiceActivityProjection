@@ -12,7 +12,7 @@ from hydra.utils import instantiate, to_absolute_path
 from omegaconf import DictConfig, OmegaConf
 from tqdm import tqdm
 
-SP_N_SEEDS = 1000
+SP_N_SEEDS = 10
 
 
 def _to_device(batch: dict[str, Any], device: torch.device) -> dict[str, Any]:
