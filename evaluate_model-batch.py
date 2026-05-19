@@ -171,8 +171,8 @@ def main(cfg_eval: DictConfig) -> None:
 
     cfg = OmegaConf.load(model_config_path)
     module = instantiate(cfg.module)
-    if getattr(module, "test_metric", None) is None and "val_metric" in cfg.module:
-        module.test_metric = instantiate(cfg.module.val_metric)
+    if getattr(module, "val_metric", None) is None and "val_metric" in cfg.module:
+        module.val_metric = instantiate(cfg.module.val_metric)
     _load_checkpoint(module, checkpoint_path)
 
     device_opt = str(cfg_eval.runtime.device).lower()
