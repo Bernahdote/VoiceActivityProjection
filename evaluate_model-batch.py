@@ -232,7 +232,7 @@ def main(cfg_eval: DictConfig) -> None:
 
     if not checkpoint_path.is_file():
         raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
-    if not test_csv_path.is_file():
+    if test_pt_path is None and not test_csv_path.is_file():
         raise FileNotFoundError(f"Test CSV not found: {test_csv_path}")
 
     cfg = cfg_eval
