@@ -281,24 +281,24 @@ class VAP(nn.Module):
     ) -> tuple[Tensor, Tensor]:
         """One-way audio-video fusion: audio attends to video."""
 
-    # Gate video using audio state
-    gv1 = torch.sigmoid(self.video_gates[i](x1)) * v1
-    gv2 = torch.sigmoid(self.video_gates[i](x2)) * v2
+        # Gate video using audio state
+        gv1 = torch.sigmoid(self.video_gates[i](x1)) * v1
+        gv2 = torch.sigmoid(self.video_gates[i](x2)) * v2
 
-    # Audio attends to video
-    x1 = x1 + self.av_cross_attns[i](
-        Q=self.av_cross_lns[i](x1),
-        K=gv1,
-        V=gv1,
-    )[0]
+        # Audio attends to video
+        x1 = x1 + self.av_cross_attns[i](
+            Q=self.av_cross_lns[i](x1),
+            K=gv1,
+            V=gv1,
+        )[0]
 
-    x2 = x2 + self.av_cross_attns[i](
-        Q=self.av_cross_lns[i](x2),
-        K=gv2,
-        V=gv2,
-    )[0]
+        x2 = x2 + self.av_cross_attns[i](
+            Q=self.av_cross_lns[i](x2),
+            K=gv2,
+            V=gv2,
+        )[0]
 
-    return x1, x2
+        return x1, x2
 
     def forward(
         self,
