@@ -1,14 +1,18 @@
 from __future__ import annotations
 
+import random
 from pathlib import Path
 from typing import Any
 
 import hydra
+import numpy as np
 import pandas as pd
 import torch
 from hydra.utils import instantiate, to_absolute_path
 from omegaconf import DictConfig, OmegaConf
 from tqdm import tqdm
+
+SP_N_SEEDS = 10
 
 
 def _to_device(batch: dict[str, Any], device: torch.device) -> dict[str, Any]:
@@ -100,15 +104,26 @@ def _evaluate(
         print("No metric configured.")
         return
 
+    LABELS = {
+        "hs": ("Hold",     "Shift"),
+        "ls": ("Short",    "Long"),
+        "sp": ("Pre-hold", "Pre-shift"),
+        "bp": ("Non-BC",   "Backchannel"),
+    }
+
     scores = metric.compute()
     metric.reset()
     print()
-    for event_name, score in scores.items():
+    for event_name in ("hs", "ls", "sp", "bp"):
+        if event_name not in scores:
+            continue
+        score = scores[event_name]
         acc0 = float(score["acc"][0])
         acc1 = float(score["acc"][1])
         bacc = (acc0 + acc1) / 2.0
         f1 = float(score["f1"])
-        print(f"{event_name}: acc0={acc0:.4f}  acc1={acc1:.4f}  bacc={bacc:.4f}  f1={f1:.4f}")
+        lbl0, lbl1 = LABELS[event_name]
+        print(f"{event_name.upper()}:  {lbl0}={acc0:.4f}  {lbl1}={acc1:.4f}  bAcc={bacc:.4f}  F1={f1:.4f}")
 
 
 @hydra.main(version_base=None, config_path="vap/conf", config_name="evaluate")

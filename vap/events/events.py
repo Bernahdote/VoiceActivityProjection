@@ -790,22 +790,10 @@ class TurnTakingEvents:
         ret.update(bc)
         ret.update(hs)
 
-        # Sample equal amounts of "pre-hold" regions as "pre-shift"
-        # ret["pred_shift_neg"] = self.sample_pred_shift_negatives(ret)
-        n_pred_shift_negs_to_sample = self.get_total_ranges(ret["pred_shift"])
-        ret["pred_shift_neg"] = self.sample_equal_amounts(
-            n_pred_shift_negs_to_sample, ret["pred_hold"], event_type="pred_shift"
-        )
-        ret.pop("pred_hold")  # remove all pred_hold regions
+        # Use all pre-hold regions as SP negatives (no subsampling)
+        ret["pred_shift_neg"] = ret.pop("pred_hold")
 
-        # Sample equal amounts of "pred_backchannel_neg" as "pred_backchannel"
-        n_pred_bc_negs_to_sample = self.get_total_ranges(ret["pred_shift"])
-        ret["pred_backchannel_neg"] = self.sample_equal_amounts(
-            n_pred_bc_negs_to_sample,
-            ret["pred_backchannel_neg"],
-            event_type="pred_backchannel",
-            is_backchannel=True,
-        )
+        # Use all backchannel negatives (no subsampling)
 
         if self.conf.equal_hold_shift:
             n_holds_to_sample = self.get_total_ranges(ret["shift"])
