@@ -4,7 +4,7 @@ defaults:
 
 runtime:
   checkpoint_path: ???
-  test_csv_path: ???
+  test_csv_path: null
   test_pt_path: null  # if set, use this .pt directory instead of CSV-based loading
   batch_size: 20
   num_workers: 4

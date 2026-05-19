@@ -225,7 +225,7 @@ def _evaluate(
 @hydra.main(version_base=None, config_path="vap/conf", config_name="evaluate")
 def main(cfg_eval: DictConfig) -> None:
     checkpoint_path = Path(to_absolute_path(str(cfg_eval.runtime.checkpoint_path)))
-    test_csv_path = Path(to_absolute_path(str(cfg_eval.runtime.test_csv_path)))
+    test_csv_path = Path(to_absolute_path(str(cfg_eval.runtime.test_csv_path))) if cfg_eval.runtime.test_csv_path is not None else None
     test_pt_path = cfg_eval.runtime.get("test_pt_path", None)
     if test_pt_path is not None:
         test_pt_path = Path(to_absolute_path(str(test_pt_path)))
