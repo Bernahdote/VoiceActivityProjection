@@ -226,6 +226,9 @@ def _evaluate(
 def main(cfg_eval: DictConfig) -> None:
     checkpoint_path = Path(to_absolute_path(str(cfg_eval.runtime.checkpoint_path)))
     test_csv_path = Path(to_absolute_path(str(cfg_eval.runtime.test_csv_path)))
+    test_pt_path = cfg_eval.runtime.get("test_pt_path", None)
+    if test_pt_path is not None:
+        test_pt_path = Path(to_absolute_path(str(test_pt_path)))
 
     if not checkpoint_path.is_file():
         raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
@@ -239,9 +242,6 @@ def main(cfg_eval: DictConfig) -> None:
     if not hasattr(module.model, "video_dim"):
         module.model.video_dim = 0
     if cfg_eval.runtime.base:
-        # newMaster (audio-only) checkpoints used nn.Identity() for feature_projection.
-        # Current branch replaced it with an MLP whose weights are absent from the checkpoint
-        # and would be randomly initialized. Reset to Identity to match training.
         module.model.feature_projection = torch.nn.Identity()
     module.val_metric = instantiate(cfg.module.val_metric)
 
@@ -251,19 +251,25 @@ def main(cfg_eval: DictConfig) -> None:
     module.eval()
 
     print(f"checkpoint: {checkpoint_path}")
-    print(f"test_csv:   {test_csv_path}")
     print(f"device:     {device}")
 
     kwargs = dict(module=module, cfg=cfg, batch_size=int(cfg_eval.runtime.batch_size), num_workers=int(cfg_eval.runtime.num_workers))
 
-    print("\n=== Full ===")
-    _evaluate(csv_path=test_csv_path, **kwargs)
+    if test_pt_path is not None:
+        # Use .pt directory directly — no improvised/naturalistic split
+        print(f"test_pt:    {test_pt_path}")
+        print("\n=== Full ===")
+        _evaluate(csv_path=test_pt_path, **kwargs)
+    else:
+        print(f"test_csv:   {test_csv_path}")
+        print("\n=== Full ===")
+        _evaluate(csv_path=test_csv_path, **kwargs)
 
-    split_paths = _split_test_csv(test_csv_path)
-    print("\n=== Improvised ===")
-    _evaluate(csv_path=split_paths["improvised"], **kwargs)
-    print("\n=== Naturalistic ===")
-    _evaluate(csv_path=split_paths["naturalistic"], **kwargs)
+        split_paths = _split_test_csv(test_csv_path)
+        print("\n=== Improvised ===")
+        _evaluate(csv_path=split_paths["improvised"], **kwargs)
+        print("\n=== Naturalistic ===")
+        _evaluate(csv_path=split_paths["naturalistic"], **kwargs)
 
 
 if __name__ == "__main__":
