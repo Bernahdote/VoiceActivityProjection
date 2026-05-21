@@ -8,16 +8,9 @@ from tqdm import tqdm
 
 
 
-ROOT = Path("/mnt/sdb/willem/datasets/seamless_interaction") #Linux
-#ROOT = Path("/Users/willemberner/datasets/seamless_interaction") #Mac
-
-
-
 FEATURE_KEYS = [
     "movement:gaze_encodings",
     "movement:head_encodings",
-    "movement:expression",
-    "movement:alignment_head_rotation",
     "movement:FAUToken",
     "movement:FAUValue",
     "smplh:body_pose",
@@ -65,13 +58,19 @@ def is_input_npz(path: Path) -> bool:
 def main() -> None:
     parser = ArgumentParser()
     parser.add_argument(
+        "--root",
+        type=Path,
+        required=True,
+        help="Root directory containing raw .npz feature files (recursively).",
+    )
+    parser.add_argument(
         "--overwrite",
         action="store_true",
         help="Overwrite output files if they exist.",
     )
     args = parser.parse_args()
 
-    input_root = ROOT.resolve()
+    input_root = args.root.resolve()
     output_root = input_root
     files = sorted(p for p in input_root.rglob("*.npz") if is_input_npz(p))
     print(f"Found {len(files)} source files under {input_root}")

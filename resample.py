@@ -32,10 +32,10 @@ def main():
     root: Path = args.root
     assert root.is_dir(), f"Root not found: {root}"
 
-    mp3s = list(root.rglob("*.mp3"))
-    for f in mp3s:
+    mp4s = list(root.rglob("*.mp4"))
+    for f in mp4s:
         f.unlink()
-    print(f"Removed {len(mp3s)} mp3 files.")
+    print(f"Removed {len(mp4s)} mp4 files.")
 
     wavs = list(root.rglob("*.wav"))
     print(f"Resampling {len(wavs)} wav files to {SR} Hz...")
