@@ -22,8 +22,6 @@ SAMPLE = Mapping[str, Tensor]
 VIDEO_FEATURE_SPECS = [
     ("gaze", 2),
     ("head", 3),
-    ("expression", 128),
-    ("alignment_head_rotation", 3),
     ("faut", 1),
     ("fauv", 24),
     ("body_pose", 63),

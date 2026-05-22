@@ -208,6 +208,8 @@ class VAP(nn.Module):
         )
 
         if self.video_dim > 0:
+            # Audio-conditioned gate on raw video features (before projection)
+            self.video_gate = nn.Linear(self.dim, self.video_dim)
             self.video_projection = nn.Sequential(
                 nn.LayerNorm(self.video_dim),
                 nn.Linear(self.video_dim, self.dim),
@@ -215,10 +217,12 @@ class VAP(nn.Module):
             self.video_self_attention = GPT(
                 dim=self.dim, dff_k=3, num_layers=1, num_heads=4, dropout=0.1,
             )
+            # Video attends to audio → enriched video
             self.va_cross_ln = nn.LayerNorm(self.dim)
             self.va_cross_attn = MultiHeadAttentionAlibi(
                 dim=self.dim, num_heads=4, dropout=0.1,
             )
+            # Audio attends to enriched video
             self.av_cross_ln = nn.LayerNorm(self.dim)
             self.av_cross_attn = MultiHeadAttentionAlibi(
                 dim=self.dim, num_heads=4, dropout=0.1,
@@ -277,14 +281,16 @@ class VAP(nn.Module):
         x1 = self.transformer.ar_channel(x1)["x"]
         x2 = self.transformer.ar_channel(x2)["x"]
 
-        # 2-3. Video self-attention + audio-video cross-attention
+        # 2. Video self-attention + bidirectional audio-video cross-attention
         if self.video_dim > 0:
             if video_features_a is None or video_features_b is None:
                 raise ValueError(
                     "video_features_a and video_features_b must be provided when video_dim > 0."
                 )
-            v1 = self.video_self_attention(self.video_projection(video_features_a))["x"]
-            v2 = self.video_self_attention(self.video_projection(video_features_b))["x"]
+            g1 = torch.sigmoid(self.video_gate(x1))
+            g2 = torch.sigmoid(self.video_gate(x2))
+            v1 = self.video_self_attention(self.video_projection(g1 * video_features_a))["x"]
+            v2 = self.video_self_attention(self.video_projection(g2 * video_features_b))["x"]
             # Step 1: video attends to audio → enriched video
             v1 = v1 + self.va_cross_attn(Q=self.va_cross_ln(v1), K=x1, V=x1)[0]
             v2 = v2 + self.va_cross_attn(Q=self.va_cross_ln(v2), K=x2, V=x2)[0]
@@ -292,7 +298,7 @@ class VAP(nn.Module):
             x1 = x1 + self.av_cross_attn(Q=self.av_cross_ln(x1), K=v1, V=v1)[0]
             x2 = x2 + self.av_cross_attn(Q=self.av_cross_ln(x2), K=v2, V=v2)[0]
 
-        # 4. Inter-speaker cross-attention
+        # 3. Inter-speaker cross-attention
         out = self.transformer.ar(x1, x2, attention=attention)
         logits, vad = self.head(out["x"], out["x1"], out["x2"])
         out["logits"] = logits
