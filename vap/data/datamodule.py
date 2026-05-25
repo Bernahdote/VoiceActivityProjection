@@ -3,7 +3,8 @@ from torch import Tensor
 from torch.utils.data import Dataset, DataLoader
 import lightning as L
 
-from os.path import isfile
+from os.path import isfile, isdir
+from pathlib import Path
 import pandas as pd
 import json
 from typing import Optional, Mapping, Any
@@ -73,6 +74,27 @@ def plot_dset_sample(d):
     ax[-1].set_xlabel("Time (s)")
     plt.tight_layout()
     plt.show()
+
+
+class VAPDatasetPreprocessed(Dataset):
+    """Loads .pt files produced by preprocess_dataset.py.
+    For the audio-only baseline we only return waveform + vad (video features ignored).
+    """
+
+    def __init__(self, directory: str) -> None:
+        self.files = sorted(Path(directory).glob("*.pt"))
+
+    def __len__(self) -> int:
+        return len(self.files)
+
+    def __getitem__(self, idx: int):
+        d = torch.load(self.files[idx], weights_only=False)
+        return {
+            "session": d.get("session", ""),
+            "waveform": d["waveform"],
+            "vad": d["vad"],
+            "dataset": d.get("dataset", ""),
+        }
 
 
 class VAPDataset(Dataset):
@@ -221,33 +243,42 @@ class VAPDataModule(L.LightningDataModule):
         if stage in (None, "fit"):
             assert self.train_path is not None, "TRAIN path is None"
             assert self.val_path is not None, "VAL path is None"
-            assert isfile(self.train_path), f"TRAIN path not found: {self.train_path}"
-            assert isfile(self.val_path), f"VAL path not found: {self.val_path}"
-            self.train_dset = VAPDataset(
-                self.train_path,
-                horizon=self.horizon,
-                sample_rate=self.sample_rate,
-                frame_hz=self.frame_hz,
-                mono=self.mono,
-            )
-            self.val_dset = VAPDataset(
-                self.val_path,
-                horizon=self.horizon,
-                sample_rate=self.sample_rate,
-                frame_hz=self.frame_hz,
-                mono=self.mono,
-            )
+            if Path(self.train_path).is_dir():
+                self.train_dset = VAPDatasetPreprocessed(self.train_path)
+            else:
+                assert isfile(self.train_path), f"TRAIN path not found: {self.train_path}"
+                self.train_dset = VAPDataset(
+                    self.train_path,
+                    horizon=self.horizon,
+                    sample_rate=self.sample_rate,
+                    frame_hz=self.frame_hz,
+                    mono=self.mono,
+                )
+            if Path(self.val_path).is_dir():
+                self.val_dset = VAPDatasetPreprocessed(self.val_path)
+            else:
+                assert isfile(self.val_path), f"VAL path not found: {self.val_path}"
+                self.val_dset = VAPDataset(
+                    self.val_path,
+                    horizon=self.horizon,
+                    sample_rate=self.sample_rate,
+                    frame_hz=self.frame_hz,
+                    mono=self.mono,
+                )
 
         if stage in (None, "test"):
             assert self.test_path is not None, "TEST path is None"
-            assert isfile(self.test_path), f"TEST path not found: {self.test_path}"
-            self.test_dset = VAPDataset(
-                self.test_path,
-                horizon=self.horizon,
-                sample_rate=self.sample_rate,
-                frame_hz=self.frame_hz,
-                mono=self.mono,
-            )
+            if Path(self.test_path).is_dir():
+                self.test_dset = VAPDatasetPreprocessed(self.test_path)
+            else:
+                assert isfile(self.test_path), f"TEST path not found: {self.test_path}"
+                self.test_dset = VAPDataset(
+                    self.test_path,
+                    horizon=self.horizon,
+                    sample_rate=self.sample_rate,
+                    frame_hz=self.frame_hz,
+                    mono=self.mono,
+                )
 
     def collate_fn(self, batch: list[dict[str, Any]]):
         batch_stacked = {k: [] for k in batch[0].keys()}
