@@ -39,6 +39,11 @@ load_stereo.py
 epoch=13-step=24514.ckpt
 *.mp4
 
+# Local plots and debug scripts
+*.png
+check_params*.py
+verify_params.py
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
