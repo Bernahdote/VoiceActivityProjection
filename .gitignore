@@ -37,6 +37,12 @@ example/*.json
 # One-off local script
 load_stereo.py
 
+# Local plots, videos, debug scripts
+*.png
+*.mp4
+check_params*.py
+verify_params.py
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
