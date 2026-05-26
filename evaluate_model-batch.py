@@ -167,8 +167,8 @@ def main(cfg_eval: DictConfig) -> None:
 
     if not checkpoint_path.is_file():
         raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
-    if not test_csv_path.is_file():
-        raise FileNotFoundError(f"Test CSV not found: {test_csv_path}")
+    if not test_csv_path.is_file() and not test_csv_path.is_dir():
+        raise FileNotFoundError(f"Test CSV/dir not found: {test_csv_path}")
 
     cfg = OmegaConf.load(model_config_path)
     module = instantiate(cfg.module)
@@ -190,6 +190,9 @@ def main(cfg_eval: DictConfig) -> None:
     print("\n=== Full ===")
     _evaluate(csv_path=test_csv_path, **kwargs)
 
+    if test_csv_path.is_dir():
+        print("\n[note] test_csv_path is a directory - skipping improvised/naturalistic split.")
+        return
     split_paths = _split_test_csv(test_csv_path)
     print("\n=== Improvised ===")
     _evaluate(csv_path=split_paths["improvised"], **kwargs)
