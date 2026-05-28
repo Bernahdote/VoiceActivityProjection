@@ -36,6 +36,30 @@ def _split_test_csv(test_csv_path: Path) -> dict[str, Path]:
     return {"improvised": improvised_path, "naturalistic": naturalistic_path}
 
 
+def _split_pt_dir(test_csv_path: Path, test_pt_path: Path) -> dict[str, Path]:
+    """Create symlinked subdirectories for improvised/naturalistic splits using the original CSV indices."""
+    import tempfile
+    df = pd.read_csv(test_csv_path)
+    text = df.apply(
+        lambda r: " ".join(str(r.get(c, "")) for c in ("dataset", "audio_path_a", "audio_path_b", "session") if c in df.columns),
+        axis=1,
+    ).str.lower()
+    improvised_idx = df.index[text.str.contains("improvised", regex=False)].tolist()
+    naturalistic_idx = df.index[text.str.contains("naturalistic", regex=False)].tolist()
+
+    base_tmp = Path(tempfile.mkdtemp(prefix="eval_pt_splits_"))
+    out: dict[str, Path] = {}
+    for split_name, idx_list in {"improvised": improvised_idx, "naturalistic": naturalistic_idx}.items():
+        split_dir = base_tmp / split_name
+        split_dir.mkdir()
+        for idx in idx_list:
+            src = test_pt_path / f"{idx:06d}.pt"
+            if src.exists():
+                (split_dir / src.name).symlink_to(src.resolve())
+        out[split_name] = split_dir
+    return out
+
+
 def _to_device(batch: dict[str, Any], device: torch.device) -> dict[str, Any]:
     out: dict[str, Any] = {}
     for k, v in batch.items():
@@ -256,10 +280,15 @@ def main(cfg_eval: DictConfig) -> None:
     kwargs = dict(module=module, cfg=cfg, batch_size=int(cfg_eval.runtime.batch_size), num_workers=int(cfg_eval.runtime.num_workers))
 
     if test_pt_path is not None:
-        # Use .pt directory directly — no improvised/naturalistic split
         print(f"test_pt:    {test_pt_path}")
         print("\n=== Full ===")
         _evaluate(csv_path=test_pt_path, **kwargs)
+        if test_csv_path is not None and test_csv_path.is_file():
+            split_dirs = _split_pt_dir(test_csv_path, test_pt_path)
+            print("\n=== Improvised ===")
+            _evaluate(csv_path=split_dirs["improvised"], **kwargs)
+            print("\n=== Naturalistic ===")
+            _evaluate(csv_path=split_dirs["naturalistic"], **kwargs)
     else:
         print(f"test_csv:   {test_csv_path}")
         print("\n=== Full ===")
