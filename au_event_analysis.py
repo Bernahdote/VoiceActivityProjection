@@ -33,6 +33,7 @@ EVENT_NAMES = [
 
 
 AU26_IDX = 20  # JawDrop (AU26) is at index 20 in the fauv array
+TAIL_FRAMES = 10  # last frames of the event window (~200 ms at 50 Hz)
 
 
 def collect_au_values(
@@ -40,10 +41,10 @@ def collect_au_values(
     feat_a: torch.Tensor,
     feat_b: torch.Tensor,
     batch_size: int,
-    acc_actor: dict[str, list],
-    acc_other: dict[str, list],
+    acc_actor: dict[str, dict[str, list]],
+    acc_other: dict[str, dict[str, list]],
 ) -> None:
-    """Collect AU26 (JawDrop) values for both the event speaker and the other speaker."""
+    """Collect summary statistics of AU26 (JawDrop) per event window."""
     for event_name in EVENT_NAMES:
         key = "pred_shift_neg" if event_name == "pred_hold" else event_name
         if key not in events:
@@ -53,8 +54,16 @@ def collect_au_values(
                 feats = [feat_a, feat_b]
                 actor_chunk = feats[speaker][b, start:end, AU26_IDX].cpu().numpy()
                 other_chunk = feats[1 - speaker][b, start:end, AU26_IDX].cpu().numpy()
-                acc_actor[event_name].append(actor_chunk)
-                acc_other[event_name].append(other_chunk)
+                if actor_chunk.size == 0:
+                    continue
+                tail_actor = actor_chunk[-TAIL_FRAMES:]
+                tail_other = other_chunk[-TAIL_FRAMES:]
+                acc_actor[event_name]["mean"].append(float(np.mean(actor_chunk)))
+                acc_actor[event_name]["max"].append(float(np.max(actor_chunk)))
+                acc_actor[event_name]["tail_mean"].append(float(np.mean(tail_actor)))
+                acc_other[event_name]["mean"].append(float(np.mean(other_chunk)))
+                acc_other[event_name]["max"].append(float(np.max(other_chunk)))
+                acc_other[event_name]["tail_mean"].append(float(np.mean(tail_other)))
 
 
 def main():
@@ -77,8 +86,8 @@ def main():
     loader = dm.test_dataloader()
 
     event_extractor = TurnTakingEvents(EventConfig())
-    acc_actor: dict[str, list] = defaultdict(list)
-    acc_other: dict[str, list] = defaultdict(list)
+    acc_actor: dict[str, dict[str, list]] = defaultdict(lambda: defaultdict(list))
+    acc_other: dict[str, dict[str, list]] = defaultdict(lambda: defaultdict(list))
 
     with torch.no_grad():
         for batch in tqdm(loader, desc="Processing"):
@@ -90,21 +99,24 @@ def main():
             events = event_extractor(vad)
             collect_au_values(events, feat_a, feat_b, bsz, acc_actor, acc_other)
 
-    print(f"\n=== AU26 (JawDrop) values per event ===")
-    print(f"{'Event':<22}  {'Actor mean':>12}  {'Actor std':>10}  {'Other mean':>12}  {'Other std':>10}  {'N frames':>10}")
-    print("-" * 90)
+    print(f"\n=== AU26 (JawDrop) per event (last {TAIL_FRAMES} frames ≈ {TAIL_FRAMES*20} ms) ===")
+    header = (
+        f"{'Event':<22}  {'A mean':>8}  {'A max':>8}  {'A tail':>8}"
+        f"  {'O mean':>8}  {'O max':>8}  {'O tail':>8}  {'N':>8}"
+    )
+    print(header)
+    print("-" * len(header))
     for event_name in EVENT_NAMES:
         a = acc_actor[event_name]
         o = acc_other[event_name]
-        if not a:
+        if not a.get("mean"):
             continue
-        av = np.concatenate(a)
-        ov = np.concatenate(o)
+        n = len(a["mean"])
         print(
             f"{event_name:<22}"
-            f"  {np.mean(av):>12.4f}  {np.std(av):>10.4f}"
-            f"  {np.mean(ov):>12.4f}  {np.std(ov):>10.4f}"
-            f"  {len(av):>10d}"
+            f"  {np.mean(a['mean']):>8.4f}  {np.mean(a['max']):>8.4f}  {np.mean(a['tail_mean']):>8.4f}"
+            f"  {np.mean(o['mean']):>8.4f}  {np.mean(o['max']):>8.4f}  {np.mean(o['tail_mean']):>8.4f}"
+            f"  {n:>8d}"
         )
 
 
