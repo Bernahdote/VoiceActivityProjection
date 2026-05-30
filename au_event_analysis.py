@@ -44,6 +44,7 @@ def collect_au_values(
     acc_other: dict[str, list],
 ) -> None:
     """Collect AU26 (JawDrop) at the single frame right before the event boundary."""
+    T = feat_a.shape[1]  # number of valid feature frames
     for event_name in EVENT_NAMES:
         key = "pred_shift_neg" if event_name == "pred_hold" else event_name
         if key not in events:
@@ -52,7 +53,9 @@ def collect_au_values(
             for start, end, speaker in events[key][b]:
                 if end <= start:
                     continue
-                last_idx = end - 1  # last frame of event window
+                last_idx = min(end - 1, T - 1)  # clamp to valid frame range
+                if last_idx < 0:
+                    continue
                 feats = [feat_a, feat_b]
                 actor_val = float(feats[speaker][b, last_idx, AU26_IDX])
                 other_val = float(feats[1 - speaker][b, last_idx, AU26_IDX])
