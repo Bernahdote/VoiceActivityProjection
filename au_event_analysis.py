@@ -32,16 +32,18 @@ EVENT_NAMES = [
 ]
 
 
+AU26_IDX = 20  # JawDrop (AU26) is at index 20 in the fauv array
+
+
 def collect_au_values(
     events: dict,
     feat_a: torch.Tensor,
     feat_b: torch.Tensor,
     batch_size: int,
-    acc_actor: dict[str, dict[int, list]],
-    acc_other: dict[str, dict[int, list]],
-    n_features: int,
+    acc_actor: dict[str, list],
+    acc_other: dict[str, list],
 ) -> None:
-    """Collect AU values for both the event speaker and the other speaker, all features."""
+    """Collect AU26 (JawDrop) values for both the event speaker and the other speaker."""
     for event_name in EVENT_NAMES:
         key = "pred_shift_neg" if event_name == "pred_hold" else event_name
         if key not in events:
@@ -49,11 +51,10 @@ def collect_au_values(
         for b in range(batch_size):
             for start, end, speaker in events[key][b]:
                 feats = [feat_a, feat_b]
-                actor_chunk = feats[speaker][b, start:end, :n_features].cpu().numpy()  # (T, n_features)
-                other_chunk = feats[1 - speaker][b, start:end, :n_features].cpu().numpy()
-                for au_idx in range(n_features):
-                    acc_actor[event_name][au_idx].append(actor_chunk[:, au_idx])
-                    acc_other[event_name][au_idx].append(other_chunk[:, au_idx])
+                actor_chunk = feats[speaker][b, start:end, AU26_IDX].cpu().numpy()
+                other_chunk = feats[1 - speaker][b, start:end, AU26_IDX].cpu().numpy()
+                acc_actor[event_name].append(actor_chunk)
+                acc_other[event_name].append(other_chunk)
 
 
 def main():
@@ -76,9 +77,8 @@ def main():
     loader = dm.test_dataloader()
 
     event_extractor = TurnTakingEvents(EventConfig())
-    n_features = 24  # fauv has 24 AU dimensions
-    acc_actor: dict[str, dict[int, list]] = {e: defaultdict(list) for e in EVENT_NAMES}
-    acc_other: dict[str, dict[int, list]] = {e: defaultdict(list) for e in EVENT_NAMES}
+    acc_actor: dict[str, list] = defaultdict(list)
+    acc_other: dict[str, list] = defaultdict(list)
 
     with torch.no_grad():
         for batch in tqdm(loader, desc="Processing"):
@@ -88,51 +88,24 @@ def main():
             bsz = vad.shape[0]
 
             events = event_extractor(vad)
-            collect_au_values(events, feat_a, feat_b, bsz, acc_actor, acc_other, n_features)
+            collect_au_values(events, feat_a, feat_b, bsz, acc_actor, acc_other)
 
-    AU_NAMES = [
-        "InnerBrowRaiser",   # AU1
-        "OuterBrowRaiser",   # AU2
-        "BrowLowerer",       # AU4
-        "UpperLidRaiser",    # AU5
-        "CheekRaiser",       # AU6
-        "LidTightener",      # AU7
-        "NoseWrinkler",      # AU9
-        "UpperLipRaiser",    # AU10
-        "LipCornerPuller",   # AU12
-        "CheekPuffer",       # AU13
-        "Dimpler",           # AU14
-        "LipCornerDepressor",# AU15
-        "LowerLipDepressor", # AU16
-        "ChinRaiser",        # AU17
-        "LipPuckerer",       # AU18
-        "LipStretcher",      # AU20
-        "LipFunneler",       # AU22
-        "LipTightener",      # AU23
-        "LipPressor",        # AU24
-        "LipsParts",         # AU25
-        "JawDrop",           # AU26
-        "LipSuck",           # AU28
-        "JawSideways",       # AU30
-        "EyesClosed",        # AU43
-    ]
-
+    print(f"\n=== AU26 (JawDrop) values per event ===")
+    print(f"{'Event':<22}  {'Actor mean':>12}  {'Actor std':>10}  {'Other mean':>12}  {'Other std':>10}  {'N frames':>10}")
+    print("-" * 90)
     for event_name in EVENT_NAMES:
-        print(f"\n=== {event_name} ===")
-        print(f"{'AU':<22}  {'Actor mean':>12}  {'Actor std':>10}  {'Other mean':>12}  {'Other std':>10}")
-        print("-" * 74)
-        for au_idx in range(n_features):
-            a = acc_actor[event_name][au_idx]
-            o = acc_other[event_name][au_idx]
-            if not a:
-                continue
-            av = np.concatenate(a)
-            ov = np.concatenate(o)
-            print(
-                f"{AU_NAMES[au_idx]:<22}"
-                f"  {np.mean(av):>12.4f}  {np.std(av):>10.4f}"
-                f"  {np.mean(ov):>12.4f}  {np.std(ov):>10.4f}"
-            )
+        a = acc_actor[event_name]
+        o = acc_other[event_name]
+        if not a:
+            continue
+        av = np.concatenate(a)
+        ov = np.concatenate(o)
+        print(
+            f"{event_name:<22}"
+            f"  {np.mean(av):>12.4f}  {np.std(av):>10.4f}"
+            f"  {np.mean(ov):>12.4f}  {np.std(ov):>10.4f}"
+            f"  {len(av):>10d}"
+        )
 
 
 if __name__ == "__main__":
