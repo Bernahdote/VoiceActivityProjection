@@ -87,11 +87,10 @@ def _run_inference_and_cache_events(module, loader, has_video: bool, sessions: l
     return cached
 
 
-def _compute_acc_f1(preds: torch.Tensor, targets: torch.Tensor, threshold: float = 0.5) -> tuple[float, float]:
-    """Compute balanced accuracy and weighted F1 binary."""
+def _compute_bacc(preds: torch.Tensor, targets: torch.Tensor, threshold: float = 0.5) -> float:
+    """Compute balanced accuracy."""
     p = (preds >= threshold).long()
     t = targets.long()
-    # Per-class accuracy
     acc_per_class = []
     for c in (0, 1):
         mask = t == c
@@ -99,32 +98,11 @@ def _compute_acc_f1(preds: torch.Tensor, targets: torch.Tensor, threshold: float
             acc_per_class.append(0.0)
         else:
             acc_per_class.append(float((p[mask] == c).float().mean()))
-    bacc = (acc_per_class[0] + acc_per_class[1]) / 2.0
-    # Weighted F1
-    f1_per_class = []
-    n_per_class = []
-    for c in (0, 1):
-        tp = float(((p == c) & (t == c)).sum())
-        fp = float(((p == c) & (t != c)).sum())
-        fn = float(((p != c) & (t == c)).sum())
-        if tp + fp == 0 or tp + fn == 0:
-            f1 = 0.0
-        else:
-            prec = tp / (tp + fp)
-            rec = tp / (tp + fn)
-            f1 = 0.0 if (prec + rec) == 0 else 2 * prec * rec / (prec + rec)
-        f1_per_class.append(f1)
-        n_per_class.append(int((t == c).sum()))
-    n_total = sum(n_per_class)
-    if n_total == 0:
-        f1_weighted = 0.0
-    else:
-        f1_weighted = sum(f1c * n / n_total for f1c, n in zip(f1_per_class, n_per_class))
-    return bacc, f1_weighted
+    return (acc_per_class[0] + acc_per_class[1]) / 2.0
 
 
-def _metrics_from_clips(clips: list[dict]) -> dict[str, dict[str, float]]:
-    """Concatenate cached per-clip events and compute bAcc + F1 per event type."""
+def _metrics_from_clips(clips: list[dict]) -> dict[str, float]:
+    """Concatenate cached per-clip events and compute bAcc per event type."""
     out = {}
     for ev in EVENT_NAMES:
         preds = []
@@ -138,8 +116,7 @@ def _metrics_from_clips(clips: list[dict]) -> dict[str, dict[str, float]]:
             continue
         preds_cat = torch.cat(preds)
         targets_cat = torch.cat(targets)
-        bacc, f1 = _compute_acc_f1(preds_cat, targets_cat)
-        out[ev] = {"bAcc": bacc, "F1": f1}
+        out[ev] = _compute_bacc(preds_cat, targets_cat)
     return out
 
 
@@ -197,35 +174,30 @@ def main():
     # Point estimate
     point = _metrics_from_clips(cached)
     print("\n=== Point estimates (full test set) ===")
-    print(f"{'Event':<6}  {'bAcc':>9}  {'F1':>9}")
+    print(f"{'Event':<6}  {'bAcc':>9}")
     for ev in EVENT_NAMES:
         if ev in point:
-            print(f"{ev.upper():<6}  {point[ev]['bAcc']:>9.4f}  {point[ev]['F1']:>9.4f}")
+            print(f"{ev.upper():<6}  {point[ev]:>9.4f}")
 
     # Bootstrap
     boot_bacc: dict[str, list[float]] = defaultdict(list)
-    boot_f1: dict[str, list[float]] = defaultdict(list)
     for b in tqdm(range(args.n_boot), desc="Bootstrap"):
         sampled = [random.choice(sessions) for _ in range(n_sess)]
         clips = [c for s in sampled for c in by_session[s]]
         agg = _metrics_from_clips(clips)
         for ev in EVENT_NAMES:
             if ev in agg:
-                boot_bacc[ev].append(agg[ev]["bAcc"])
-                boot_f1[ev].append(agg[ev]["F1"])
+                boot_bacc[ev].append(agg[ev])
 
     # 95% CI per metric
     print("\n=== 95% CI from bootstrap ===")
-    print(f"{'Event':<6}  {'bAcc mean':>10}  {'95% CI bAcc':>22}  {'F1 mean':>10}  {'95% CI F1':>22}")
+    print(f"{'Event':<6}  {'bAcc mean':>10}  {'95% CI bAcc':>22}")
     for ev in EVENT_NAMES:
         if ev not in boot_bacc:
             continue
         b = np.array(boot_bacc[ev])
-        f = np.array(boot_f1[ev])
         cb = (float(np.percentile(b, 2.5)), float(np.percentile(b, 97.5)))
-        cf = (float(np.percentile(f, 2.5)), float(np.percentile(f, 97.5)))
-        print(f"{ev.upper():<6}  {np.mean(b):>10.4f}  [{cb[0]:>7.4f}, {cb[1]:>7.4f}]  "
-              f"{np.mean(f):>10.4f}  [{cf[0]:>7.4f}, {cf[1]:>7.4f}]")
+        print(f"{ev.upper():<6}  {np.mean(b):>10.4f}  [{cb[0]:>7.4f}, {cb[1]:>7.4f}]")
 
 
 if __name__ == "__main__":
