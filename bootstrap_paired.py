@@ -66,6 +66,11 @@ def _run_and_cache_events(module, loader, has_video: bool, sessions: list[str]):
             else:
                 out = module.model(batch["waveform"])
             probs = module.model.objective.get_probs(out["logits"])
+            labels = module.model.extract_labels(batch["vad"])
+            # Per-clip VAP loss (no reduction so we can keep per-clip)
+            per_clip_loss = module.model.objective.loss_vap(
+                out["logits"], labels, reduction="none"
+            ).mean(dim=-1)  # (B,)
             bsz = batch["waveform"].shape[0]
             for b in range(bsz):
                 metric.reset()
@@ -81,6 +86,7 @@ def _run_and_cache_events(module, loader, has_video: bool, sessions: list[str]):
                 cached.append({
                     "session": sessions[clip_idx] if clip_idx < len(sessions) else str(clip_idx),
                     "events": clip_events,
+                    "loss": float(per_clip_loss[b]),
                 })
                 clip_idx += 1
     metric.reset()
@@ -112,6 +118,8 @@ def _metrics_from_clips(clips):
         if not preds:
             continue
         out[ev] = _compute_bacc(torch.cat(preds), torch.cat(targets))
+    # Per-clip loss averaged across all clips in the sample
+    out["loss"] = float(np.mean([c["loss"] for c in clips]))
     return out
 
 
@@ -190,8 +198,9 @@ def main():
     point0 = _metrics_from_clips(cached0)
     point1 = _metrics_from_clips(cached1)
     print("\n=== Point estimates ===")
-    print(f"{'Event':<6}  {'M0':>9}  {'M1':>9}  {'Δ (M1-M0)':>12}")
-    for ev in EVENT_NAMES:
+    metric_keys = EVENT_NAMES + ["loss"]
+    print(f"{'Metric':<6}  {'M0':>9}  {'M1':>9}  {'Δ (M1-M0)':>12}")
+    for ev in metric_keys:
         if ev in point0 and ev in point1:
             print(f"{ev.upper():<6}  {point0[ev]:>9.4f}  {point1[ev]:>9.4f}  {point1[ev]-point0[ev]:>+12.4f}")
 
@@ -203,14 +212,14 @@ def main():
         clips1 = [c for s in sampled for c in by_sess1[s]]
         agg0 = _metrics_from_clips(clips0)
         agg1 = _metrics_from_clips(clips1)
-        for ev in EVENT_NAMES:
+        for ev in metric_keys:
             if ev in agg0 and ev in agg1:
                 deltas[ev].append(agg1[ev] - agg0[ev])
 
     # 95% CI on deltas
     print("\n=== Paired bootstrap: 95% CI on Δ (M1 - M0) ===")
-    print(f"{'Event':<6}  {'Δ mean':>10}  {'95% CI Δ':>22}  Significant?")
-    for ev in EVENT_NAMES:
+    print(f"{'Metric':<6}  {'Δ mean':>10}  {'95% CI Δ':>22}  Significant?")
+    for ev in metric_keys:
         if ev not in deltas:
             continue
         d = np.array(deltas[ev])
