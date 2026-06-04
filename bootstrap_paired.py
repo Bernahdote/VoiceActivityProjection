@@ -218,14 +218,13 @@ def main():
 
     # 95% CI on deltas
     print("\n=== Paired bootstrap: 95% CI on Δ (M1 - M0) ===")
-    print(f"{'Metric':<6}  {'Δ mean':>10}  {'95% CI Δ':>22}  Significant?")
+    print(f"{'Metric':<6}  {'Δ mean':>10}  {'95% CI Δ':>22}")
     for ev in metric_keys:
         if ev not in deltas:
             continue
         d = np.array(deltas[ev])
         ci = (float(np.percentile(d, 2.5)), float(np.percentile(d, 97.5)))
-        sig = "yes (excludes 0)" if (ci[0] > 0 or ci[1] < 0) else "no (includes 0)"
-        print(f"{ev.upper():<6}  {np.mean(d):>+10.4f}  [{ci[0]:>+7.4f}, {ci[1]:>+7.4f}]  {sig}")
+        print(f"{ev.upper():<6}  {np.mean(d):>+10.4f}  [{ci[0]:>+7.4f}, {ci[1]:>+7.4f}]")
 
 
 if __name__ == "__main__":
