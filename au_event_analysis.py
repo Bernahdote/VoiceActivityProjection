@@ -44,6 +44,9 @@ AU_INDICES = {
     "AU43 (EyesClosed)": 23,
 }
 
+# Number of frames immediately before each event window to average over (~60 ms at 50 Hz)
+PRE_FRAMES = 3
+
 
 
 def collect_au_values(
@@ -51,11 +54,11 @@ def collect_au_values(
     feat_a: torch.Tensor,
     feat_b: torch.Tensor,
     batch_size: int,
-    acc_actor: dict[str, dict[str, list[float]]],
-    acc_other: dict[str, dict[str, list[float]]],
+    acc_p1: dict[str, dict[str, list[float]]],
+    acc_p2: dict[str, dict[str, list[float]]],
 ) -> None:
-    """For each event, average each selected AU value across the whole event
-    window [start, end), for both the actor and the other speaker.
+    """For each event, average each selected AU value across the PRE_FRAMES
+    frames immediately BEFORE the event window starts, for both speakers.
     """
     T = feat_a.shape[1]
     for event_name in EVENT_NAMES:
@@ -64,16 +67,16 @@ def collect_au_values(
             continue
         for b in range(batch_size):
             for start, end, speaker in events[key][b]:
-                start_idx = max(start, 0)
-                end_idx = min(end, T)
-                if end_idx <= start_idx:
+                pre_end = min(max(start, 0), T)
+                pre_start = max(pre_end - PRE_FRAMES, 0)
+                if pre_end <= pre_start:
                     continue
                 feats = [feat_a, feat_b]
                 for au_name, idx in AU_INDICES.items():
-                    actor_val = float(feats[speaker][b, start_idx:end_idx, idx].mean())
-                    other_val = float(feats[1 - speaker][b, start_idx:end_idx, idx].mean())
-                    acc_actor[event_name][au_name].append(actor_val)
-                    acc_other[event_name][au_name].append(other_val)
+                    p1_val = float(feats[speaker][b, pre_start:pre_end, idx].mean())
+                    p2_val = float(feats[1 - speaker][b, pre_start:pre_end, idx].mean())
+                    acc_p1[event_name][au_name].append(p1_val)
+                    acc_p2[event_name][au_name].append(p2_val)
 
 
 def main():
@@ -97,8 +100,8 @@ def main():
     loader = dm.test_dataloader()
 
     event_extractor = TurnTakingEvents(EventConfig(equal_hold_shift=False))
-    acc_actor: dict[str, dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
-    acc_other: dict[str, dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
+    acc_p1: dict[str, dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
+    acc_p2: dict[str, dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
 
     with torch.no_grad():
         for batch in tqdm(loader, desc="Processing"):
@@ -108,20 +111,20 @@ def main():
             bsz = vad.shape[0]
 
             events = event_extractor(vad)
-            collect_au_values(events, feat_a, feat_b, bsz, acc_actor, acc_other)
+            collect_au_values(events, feat_a, feat_b, bsz, acc_p1, acc_p2)
 
     # Print one section per AU
     for au_name in AU_INDICES:
-        print(f"\n=== {au_name} at the frame right before the event ===")
+        print(f"\n=== {au_name} averaged over {PRE_FRAMES} frames immediately before each event ===")
         header = (
-            f"{'Event':<22}  {'Actor mean':>12}  {'Actor std':>10}"
-            f"  {'Other mean':>12}  {'Other std':>10}  {'N events':>10}"
+            f"{'Event':<22}  {'P1 mean':>12}  {'P1 std':>10}"
+            f"  {'P2 mean':>12}  {'P2 std':>10}  {'N events':>10}"
         )
         print(header)
         print("-" * len(header))
         for event_name in EVENT_NAMES:
-            a = acc_actor[event_name][au_name]
-            o = acc_other[event_name][au_name]
+            a = acc_p1[event_name][au_name]
+            o = acc_p2[event_name][au_name]
             if not a:
                 continue
             av = np.asarray(a)
