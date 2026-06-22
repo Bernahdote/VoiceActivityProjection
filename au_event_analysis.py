@@ -31,8 +31,6 @@ EVENT_NAMES = [
     "short",
     "pred_shift",
     "pred_hold",
-    "pred_backchannel",
-    "pred_backchannel_neg",
 ]
 
 # AU index in the 24-dim fauv array (FAU value features)
@@ -44,8 +42,8 @@ AU_INDICES = {
     "AU43 (EyesClosed)": 23,
 }
 
-# Number of frames immediately before each event window to average over (~60 ms at 50 Hz)
-PRE_FRAMES = 3
+# Number of frames immediately before each event window to average over (1 = single frame just before)
+PRE_FRAMES = 1
 
 
 
@@ -115,7 +113,7 @@ def main():
 
     # Print one section per AU
     for au_name in AU_INDICES:
-        print(f"\n=== {au_name} averaged over {PRE_FRAMES} frames immediately before each event ===")
+        print(f"\n=== {au_name} ===")
         header = (
             f"{'Event':<22}  {'P1 mean':>12}  {'P1 std':>10}"
             f"  {'P2 mean':>12}  {'P2 std':>10}  {'N events':>10}"
