@@ -47,7 +47,7 @@ def main():
         print(f"[warn] {len(pt_files)} .pt files vs {len(df)} CSV rows; "
               "assuming index-based correspondence.")
 
-    extractor = TurnTakingEvents(EventConfig())
+    extractor = TurnTakingEvents(EventConfig(equal_hold_shift=False))
 
     # Counters per domain
     counts = defaultdict(lambda: defaultdict(int))   # counts[domain][event_name]
