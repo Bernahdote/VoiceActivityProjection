@@ -1,10 +1,14 @@
 """
-Analyse the average value of a specific AU feature index across turn-taking events.
+Analyse the average value of selected FAUs at the frame right before each
+turn-taking event, for the actor (event speaker) and the other speaker.
+
+Selected FAUs: AU4 (BrowLowerer), AU10 (UpperLipRaiser), AU12 (LipCornerPull),
+AU26 (JawDrop), AU43 (EyesClosed).
 
 Usage:
-    uv run au_event_analysis.py \
-        --test_csv /path/to/test.csv \
-        --batch_size 20 \
+    uv run python au_event_analysis.py \\
+        --test_csv /path/to/test.csv (or .pt directory) \\
+        --batch_size 20 \\
         --num_workers 4
 """
 from __future__ import annotations
@@ -31,8 +35,15 @@ EVENT_NAMES = [
     "pred_backchannel_neg",
 ]
 
+# AU index in the 24-dim fauv array (FAU value features)
+AU_INDICES = {
+    "AU4 (BrowLowerer)": 2,
+    "AU10 (UpperLipRaiser)": 7,
+    "AU12 (LipCornerPull)": 8,
+    "AU26 (JawDrop)": 20,
+    "AU43 (EyesClosed)": 23,
+}
 
-AU26_IDX = 20  # JawDrop (AU26) is at index 20 in the fauv array
 
 
 def collect_au_values(
@@ -40,32 +51,35 @@ def collect_au_values(
     feat_a: torch.Tensor,
     feat_b: torch.Tensor,
     batch_size: int,
-    acc_actor: dict[str, list],
-    acc_other: dict[str, list],
+    acc_actor: dict[str, dict[str, list[float]]],
+    acc_other: dict[str, dict[str, list[float]]],
 ) -> None:
-    """Collect AU26 (JawDrop) at the single frame right before the event boundary."""
-    T = feat_a.shape[1]  # number of valid feature frames
+    """For each event, average each selected AU value across the whole event
+    window [start, end), for both the actor and the other speaker.
+    """
+    T = feat_a.shape[1]
     for event_name in EVENT_NAMES:
         key = "pred_shift_neg" if event_name == "pred_hold" else event_name
         if key not in events:
             continue
         for b in range(batch_size):
             for start, end, speaker in events[key][b]:
-                if end <= start:
-                    continue
-                last_idx = min(end - 1, T - 1)  # clamp to valid frame range
-                if last_idx < 0:
+                start_idx = max(start, 0)
+                end_idx = min(end, T)
+                if end_idx <= start_idx:
                     continue
                 feats = [feat_a, feat_b]
-                actor_val = float(feats[speaker][b, last_idx, AU26_IDX])
-                other_val = float(feats[1 - speaker][b, last_idx, AU26_IDX])
-                acc_actor[event_name].append(actor_val)
-                acc_other[event_name].append(other_val)
+                for au_name, idx in AU_INDICES.items():
+                    actor_val = float(feats[speaker][b, start_idx:end_idx, idx].mean())
+                    other_val = float(feats[1 - speaker][b, start_idx:end_idx, idx].mean())
+                    acc_actor[event_name][au_name].append(actor_val)
+                    acc_other[event_name][au_name].append(other_val)
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--test_csv", required=True)
+    parser.add_argument("--test_csv", required=True,
+                        help="Test CSV or .pt directory (datamodule auto-detects).")
     parser.add_argument("--batch_size", type=int, default=20)
     parser.add_argument("--num_workers", type=int, default=4)
     args = parser.parse_args()
@@ -82,9 +96,9 @@ def main():
     dm.setup("test")
     loader = dm.test_dataloader()
 
-    event_extractor = TurnTakingEvents(EventConfig())
-    acc_actor: dict[str, list] = defaultdict(list)
-    acc_other: dict[str, list] = defaultdict(list)
+    event_extractor = TurnTakingEvents(EventConfig(equal_hold_shift=False))
+    acc_actor: dict[str, dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
+    acc_other: dict[str, dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
 
     with torch.no_grad():
         for batch in tqdm(loader, desc="Processing"):
@@ -96,26 +110,28 @@ def main():
             events = event_extractor(vad)
             collect_au_values(events, feat_a, feat_b, bsz, acc_actor, acc_other)
 
-    print(f"\n=== AU26 (JawDrop) at the frame right before the event ===")
-    header = (
-        f"{'Event':<22}  {'Actor mean':>12}  {'Actor std':>10}"
-        f"  {'Other mean':>12}  {'Other std':>10}  {'N events':>10}"
-    )
-    print(header)
-    print("-" * len(header))
-    for event_name in EVENT_NAMES:
-        a = acc_actor[event_name]
-        o = acc_other[event_name]
-        if not a:
-            continue
-        av = np.asarray(a)
-        ov = np.asarray(o)
-        print(
-            f"{event_name:<22}"
-            f"  {np.mean(av):>12.4f}  {np.std(av):>10.4f}"
-            f"  {np.mean(ov):>12.4f}  {np.std(ov):>10.4f}"
-            f"  {len(av):>10d}"
+    # Print one section per AU
+    for au_name in AU_INDICES:
+        print(f"\n=== {au_name} at the frame right before the event ===")
+        header = (
+            f"{'Event':<22}  {'Actor mean':>12}  {'Actor std':>10}"
+            f"  {'Other mean':>12}  {'Other std':>10}  {'N events':>10}"
         )
+        print(header)
+        print("-" * len(header))
+        for event_name in EVENT_NAMES:
+            a = acc_actor[event_name][au_name]
+            o = acc_other[event_name][au_name]
+            if not a:
+                continue
+            av = np.asarray(a)
+            ov = np.asarray(o)
+            print(
+                f"{event_name:<22}"
+                f"  {np.mean(av):>12.4f}  {np.std(av):>10.4f}"
+                f"  {np.mean(ov):>12.4f}  {np.std(ov):>10.4f}"
+                f"  {len(av):>10d}"
+            )
 
 
 if __name__ == "__main__":
