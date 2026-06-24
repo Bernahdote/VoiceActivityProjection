@@ -315,7 +315,7 @@ def main():
                 assert (e0["task"], e0["true_label_int"], e0["speaker_channel"]) == \
                        (e1["task"], e1["true_label_int"], e1["speaker_channel"]), \
                     f"event metadata mismatch at clip {clip_idx} idx {e0['intra_idx']}"
-                event_id = f"{conv}_{e0['intra_idx']}"
+                event_id = f"{conv}_c{clip_idx:06d}_{e0['intra_idx']}"
                 speaker_id = pids[e0["speaker_channel"]] or "?"
                 neg_label, pos_label = TASK_LABELS[e0["task"]]
                 true_label = pos_label if e0["true_label_int"] == 1 else neg_label
