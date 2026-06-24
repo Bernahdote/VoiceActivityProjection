@@ -114,20 +114,24 @@ def _per_clip_event_predictions(
                 clip_events: list[dict] = []
                 intra_idx = 0
 
+                # p_now and p_fut are (B, T) and give the probability for speaker 0.
+                # For speaker 1, use 1 - p.
+
                 # ---- HS (Hold vs Shift) -------------------------------
                 # `speaker` in the event tuple = the speaker who is active AFTER
-                # the silence. The user wants the speaker BEFORE the silence:
+                # the silence. User wants the speaker BEFORE the silence:
                 #   Shift -> opposite of `speaker` (turn changes)
                 #   Hold  -> same as `speaker`     (turn continues)
                 for ev_pos, label_int in (("shift", 1), ("hold", 0)):
                     for start, end, speaker in events[ev_pos][b]:
+                        p_shift_of_speaker = p_now[b, start:end] if speaker == 0 else 1 - p_now[b, start:end]
                         if ev_pos == "shift":
-                            p_shift = p_now[b, start:end, speaker]
+                            p_event = p_shift_of_speaker
                             speaker_channel = 1 - int(speaker)
                         else:
-                            p_shift = 1 - p_now[b, start:end, speaker]
+                            p_event = 1 - p_shift_of_speaker
                             speaker_channel = int(speaker)
-                        mean_p = float(p_shift.mean())
+                        mean_p = float(p_event.mean())
                         pred_int = 1 if mean_p >= threshold else 0
                         clip_events.append({
                             "intra_idx": intra_idx,
@@ -139,11 +143,9 @@ def _per_clip_event_predictions(
                         intra_idx += 1
 
                 # ---- SL (Short vs Long) -------------------------------
-                # `speaker` = the speaker of the segment (the incoming speaker).
-                # User wants the incoming speaker -> `speaker` directly.
                 for ev_pos, label_int in (("long", 1), ("short", 0)):
                     for start, end, speaker in events[ev_pos][b]:
-                        p_long = p_fut[b, start:end, speaker]
+                        p_long = p_fut[b, start:end] if speaker == 0 else 1 - p_fut[b, start:end]
                         mean_p = float(p_long.mean())
                         pred_int = 1 if mean_p >= threshold else 0
                         clip_events.append({
@@ -156,15 +158,13 @@ def _per_clip_event_predictions(
                         intra_idx += 1
 
                 # ---- PS (PreHold vs PreShift) -------------------------
-                # `speaker` = the speaker being predicted as the next speaker
-                # (i.e., the candidate for floor-taking).
-                # User wants the currently active speaker -> opposite of `speaker`.
                 for ev_pos, label_int in (("pred_shift", 1), ("pred_shift_neg", 0)):
                     for start, end, speaker in events[ev_pos][b]:
+                        p_shift_of_speaker = p_fut[b, start:end] if speaker == 0 else 1 - p_fut[b, start:end]
                         if ev_pos == "pred_shift":
-                            pred_prob = p_fut[b, start:end, speaker]
+                            pred_prob = p_shift_of_speaker
                         else:
-                            pred_prob = 1 - p_fut[b, start:end, speaker]
+                            pred_prob = 1 - p_shift_of_speaker
                         mean_p = float(pred_prob.mean())
                         pred_int = 1 if mean_p >= threshold else 0
                         clip_events.append({
