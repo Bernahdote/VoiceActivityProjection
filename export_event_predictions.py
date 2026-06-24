@@ -73,8 +73,104 @@ TASK_LABELS = {
 }
 
 
+EVENT_POSITIONS = (
+    ("HS", "shift", 1),
+    ("HS", "hold", 0),
+    ("SL", "long", 1),
+    ("SL", "short", 0),
+    ("PS", "pred_shift", 1),
+    ("PS", "pred_shift_neg", 0),
+)
+
+
+def _events_for_clip(events, b, T):
+    """Return a flat list of (task, ev_pos, label_int, start, end, speaker)
+    in a deterministic order, for clip index `b` in the batched event dict.
+    """
+    out = []
+    for task, ev_pos, label_int in EVENT_POSITIONS:
+        if ev_pos not in events:
+            continue
+        for start, end, speaker in events[ev_pos][b]:
+            if end > T:
+                end = T
+            if end <= start:
+                continue
+            out.append((task, ev_pos, label_int, int(start), int(end), int(speaker)))
+    return out
+
+
+def _prediction_for_event(p_now, p_fut, b, task, ev_pos, start, end, speaker, threshold):
+    """Compute the per-event aggregated prediction (0/1) and the channel of the
+    user-specified speaker (HS: before silence, SL: incoming, PS: currently active).
+    """
+    if task == "HS":
+        p_shift_of_speaker = p_now[b, start:end] if speaker == 0 else 1 - p_now[b, start:end]
+        if ev_pos == "shift":
+            p_event = p_shift_of_speaker
+            speaker_channel = 1 - speaker
+        else:
+            p_event = 1 - p_shift_of_speaker
+            speaker_channel = speaker
+    elif task == "SL":
+        p_event = p_fut[b, start:end] if speaker == 0 else 1 - p_fut[b, start:end]
+        speaker_channel = speaker
+    else:  # PS
+        p_shift_of_speaker = p_fut[b, start:end] if speaker == 0 else 1 - p_fut[b, start:end]
+        if ev_pos == "pred_shift":
+            p_event = p_shift_of_speaker
+        else:
+            p_event = 1 - p_shift_of_speaker
+        speaker_channel = 1 - speaker
+    mean_p = float(p_event.mean())
+    pred_int = 1 if mean_p >= threshold else 0
+    return pred_int, speaker_channel
+
+
+def _predictions_for_cached_events(
+    module, loader, has_video: bool, per_clip_event_lists, threshold: float = 0.5,
+):
+    """Run inference and compute predictions for events that were already
+    extracted on the M0 pass (so M0 and M5 use IDENTICAL event sets)."""
+    per_clip_events: list[list[dict]] = []
+    clip_idx = 0
+    with torch.inference_mode():
+        for batch in tqdm(loader, desc="Inference"):
+            batch = _to_device(batch, module.device)
+            if has_video and getattr(module.model, "video_dim", 0) > 0:
+                out = module.model(
+                    batch["waveform"],
+                    video_features_a=batch["video_features_a"],
+                    video_features_b=batch["video_features_b"],
+                )
+            else:
+                out = module.model(batch["waveform"])
+            probs = module.model.objective.get_probs(out["logits"])
+            p_now = probs["p_now"]
+            p_fut = probs["p_future"]
+            bsz = batch["waveform"].shape[0]
+            for b in range(bsz):
+                clip_events = []
+                for intra_idx, (task, ev_pos, label_int, start, end, speaker) in enumerate(
+                    per_clip_event_lists[clip_idx]
+                ):
+                    pred_int, speaker_channel = _prediction_for_event(
+                        p_now, p_fut, b, task, ev_pos, start, end, speaker, threshold
+                    )
+                    clip_events.append({
+                        "intra_idx": intra_idx,
+                        "task": task,
+                        "true_label_int": label_int,
+                        "prediction_int": pred_int,
+                        "speaker_channel": speaker_channel,
+                    })
+                per_clip_events.append(clip_events)
+                clip_idx += 1
+    return per_clip_events
+
+
 def _per_clip_event_predictions(
-    module, loader, has_video: bool, threshold: float = 0.5
+    module, loader, has_video: bool, threshold: float = 0.5, return_events: bool = False,
 ):
     """Return list[list[event dict]]: outer index = clip in loader order.
 
@@ -90,6 +186,7 @@ def _per_clip_event_predictions(
     """
     metric = module.val_metric
     per_clip_events: list[list[dict]] = []
+    per_clip_event_lists: list[list[tuple]] = []
 
     with torch.inference_mode():
         for batch in tqdm(loader, desc="Inference"):
@@ -107,76 +204,29 @@ def _per_clip_event_predictions(
             events = metric.event_extractor(batch["vad"])
 
             bsz = batch["waveform"].shape[0]
+            T = batch["vad"].shape[1]
             p_now = probs["p_now"]
             p_fut = probs["p_future"]
 
             for b in range(bsz):
                 clip_events: list[dict] = []
-                intra_idx = 0
-
-                # p_now and p_fut are (B, T) and give the probability for speaker 0.
-                # For speaker 1, use 1 - p.
-
-                # ---- HS (Hold vs Shift) -------------------------------
-                # `speaker` in the event tuple = the speaker who is active AFTER
-                # the silence. User wants the speaker BEFORE the silence:
-                #   Shift -> opposite of `speaker` (turn changes)
-                #   Hold  -> same as `speaker`     (turn continues)
-                for ev_pos, label_int in (("shift", 1), ("hold", 0)):
-                    for start, end, speaker in events[ev_pos][b]:
-                        p_shift_of_speaker = p_now[b, start:end] if speaker == 0 else 1 - p_now[b, start:end]
-                        if ev_pos == "shift":
-                            p_event = p_shift_of_speaker
-                            speaker_channel = 1 - int(speaker)
-                        else:
-                            p_event = 1 - p_shift_of_speaker
-                            speaker_channel = int(speaker)
-                        mean_p = float(p_event.mean())
-                        pred_int = 1 if mean_p >= threshold else 0
-                        clip_events.append({
-                            "intra_idx": intra_idx,
-                            "task": "HS",
-                            "true_label_int": label_int,
-                            "prediction_int": pred_int,
-                            "speaker_channel": speaker_channel,
-                        })
-                        intra_idx += 1
-
-                # ---- SL (Short vs Long) -------------------------------
-                for ev_pos, label_int in (("long", 1), ("short", 0)):
-                    for start, end, speaker in events[ev_pos][b]:
-                        p_long = p_fut[b, start:end] if speaker == 0 else 1 - p_fut[b, start:end]
-                        mean_p = float(p_long.mean())
-                        pred_int = 1 if mean_p >= threshold else 0
-                        clip_events.append({
-                            "intra_idx": intra_idx,
-                            "task": "SL",
-                            "true_label_int": label_int,
-                            "prediction_int": pred_int,
-                            "speaker_channel": int(speaker),
-                        })
-                        intra_idx += 1
-
-                # ---- PS (PreHold vs PreShift) -------------------------
-                for ev_pos, label_int in (("pred_shift", 1), ("pred_shift_neg", 0)):
-                    for start, end, speaker in events[ev_pos][b]:
-                        p_shift_of_speaker = p_fut[b, start:end] if speaker == 0 else 1 - p_fut[b, start:end]
-                        if ev_pos == "pred_shift":
-                            pred_prob = p_shift_of_speaker
-                        else:
-                            pred_prob = 1 - p_shift_of_speaker
-                        mean_p = float(pred_prob.mean())
-                        pred_int = 1 if mean_p >= threshold else 0
-                        clip_events.append({
-                            "intra_idx": intra_idx,
-                            "task": "PS",
-                            "true_label_int": label_int,
-                            "prediction_int": pred_int,
-                            "speaker_channel": 1 - int(speaker),
-                        })
-                        intra_idx += 1
-
+                # Build deterministic event list for this clip and store it
+                ev_list = _events_for_clip(events, b, T)
+                per_clip_event_lists.append(ev_list)
+                for intra_idx, (task, ev_pos, label_int, start, end, speaker) in enumerate(ev_list):
+                    pred_int, speaker_channel = _prediction_for_event(
+                        p_now, p_fut, b, task, ev_pos, start, end, speaker, threshold
+                    )
+                    clip_events.append({
+                        "intra_idx": intra_idx,
+                        "task": task,
+                        "true_label_int": label_int,
+                        "prediction_int": pred_int,
+                        "speaker_channel": speaker_channel,
+                    })
                 per_clip_events.append(clip_events)
+    if return_events:
+        return per_clip_events, per_clip_event_lists
     return per_clip_events
 
 
@@ -208,29 +258,35 @@ def main():
     )
     df["conversation_id"] = df["session"].astype(str)
 
-    # ---- Model 0 ----
+    # ---- Model 0: get probs, extract events, save events + predictions ----
     cfg0 = OmegaConf.load(args.model_config)
     if args.video_dim0 is not None:
         cfg0.module.model.video_dim = args.video_dim0
     loader0 = _make_loader(args.test_pt0, cfg0, args.batch_size, args.num_workers)
     m0 = _load_module(Path(args.ckpt0), cfg0, device)
     print("Inference for model M0...")
-    events_m0 = _per_clip_event_predictions(
-        m0, loader0, args.video_dim0 is not None and args.video_dim0 > 0,
-        threshold=args.threshold,
+    # IMPORTANT: seed before event extraction so pred_shift_neg negatives are
+    # reproducible. We then reuse the SAME extracted events for M5 to guarantee
+    # equal event counts and a paired event_id.
+    import random
+    random.seed(0)
+    torch.manual_seed(0)
+    has_video0 = args.video_dim0 is not None and args.video_dim0 > 0
+    events_m0, per_clip_event_lists = _per_clip_event_predictions(
+        m0, loader0, has_video0, threshold=args.threshold, return_events=True,
     )
     del m0
 
-    # ---- Model 1 ----
+    # ---- Model 1: rerun the same loader, REUSE the same events ----
     cfg1 = OmegaConf.load(args.model_config)
     if args.video_dim1 is not None:
         cfg1.module.model.video_dim = args.video_dim1
     loader1 = _make_loader(args.test_pt1, cfg1, args.batch_size, args.num_workers)
     m1 = _load_module(Path(args.ckpt1), cfg1, device)
-    print("Inference for model M5...")
-    events_m1 = _per_clip_event_predictions(
-        m1, loader1, args.video_dim1 is not None and args.video_dim1 > 0,
-        threshold=args.threshold,
+    print("Inference for model M5 (using cached events from M0 run)...")
+    has_video1 = args.video_dim1 is not None and args.video_dim1 > 0
+    events_m1 = _predictions_for_cached_events(
+        m1, loader1, has_video1, per_clip_event_lists, threshold=args.threshold,
     )
     del m1
 
